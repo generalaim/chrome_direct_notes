@@ -33,7 +33,7 @@
                 class="info-tip"
                 type="button"
                 aria-label="Подсказка по маркеру"
-                data-tooltip="Если включено, при наведении на кампанию, группу или объявление появляется временная плашка заметки. Постоянная зеленая З видна только там, где заметка уже есть."
+                data-tooltip="Если включено, при наведении на кампанию, группу или объявление появляется временная плашка заметки. Постоянная З видна только там, где заметка уже есть."
               >
                 ?
               </button>
@@ -56,7 +56,18 @@
             </div>
             <p class="status-line" id="currentSubtitle">Наведи на кампанию, группу или объявление: появится плашка для добавления или редактирования заметки.</p>
           </div>
-          <button class="mini-action" id="refreshButton" type="button">Обновить</button>
+          <div class="scan-actions">
+            <button class="scan-action" id="scanPageButton" type="button">Скан заметок</button>
+            <button class="mini-action" id="refreshButton" type="button">Обновить</button>
+          </div>
+        </div>
+        <p class="status-line scan-status" id="scanStatus">Скан отчета еще не запускался.</p>
+        <div class="option-row">
+          <span>Плавающая сводка</span>
+          <label class="switch small" title="Показывать счетчик уникальных заметок поверх страницы Директа">
+            <input id="pageCounterToggle" type="checkbox" />
+            <span></span>
+          </label>
         </div>
       </section>
 
