@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GR | Direct Notes</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Яндекс.Директ</p>
+          <h1>Notes</h1>
+        </div>
+        <div class="score" id="notesCount" title="Всего заметок">0</div>
+      </header>
+
+      <section class="panel">
+        <div class="mode-tabs" aria-label="Тип заметки">
+          <button class="mode-tab" id="campaignModeButton" type="button" data-note-type="campaign">Кампании</button>
+          <button class="mode-tab" id="adgroupModeButton" type="button" data-note-type="adgroup">Группы</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="title-row">
+              <h2>Маркер на странице</h2>
+              <button
+                class="info-tip"
+                type="button"
+                aria-label="Подсказка по маркеру"
+                data-tooltip="Если включено и у текущей кампании или группы есть заметка, на странице Директа появится компактная зеленая пометка."
+              >
+                ?
+              </button>
+            </div>
+            <p class="status-line" id="pageStatus">Проверяю страницу...</p>
+          </div>
+          <label class="switch" title="Включить или выключить маркер заметок на странице">
+            <input id="enabledToggle" type="checkbox" />
+            <span></span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel current-panel">
+        <div class="panel-head">
+          <div>
+            <div class="title-row">
+              <h2 id="currentTitle">Текущая сущность</h2>
+              <span class="count-pill" id="currentBadge">нет ID</span>
+            </div>
+            <p class="status-line" id="currentSubtitle">Открой кампанию или группу в Директе.</p>
+          </div>
+          <button class="mini-action" id="refreshButton" type="button">Обновить</button>
+        </div>
+
+        <form class="note-form" id="noteForm">
+          <textarea id="noteText" rows="4" placeholder="Что делали, что проверить через неделю, какие решения учесть"></textarea>
+          <button class="primary wide" id="saveButton" type="submit">Сохранить заметку</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="title-row">
+            <h2 id="notesTitle">Кампании</h2>
+            <span class="count-pill" id="typeCount">0 шт.</span>
+          </div>
+          <div class="mini-actions">
+            <button class="mini-action" id="copyCurrentButton" type="button">Копия</button>
+            <button class="mini-action danger" id="clearTypeButton" type="button">Очистить</button>
+          </div>
+        </div>
+
+        <div class="notes-list-shell">
+          <div class="notes-list" id="notesList"></div>
+        </div>
+      </section>
+
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

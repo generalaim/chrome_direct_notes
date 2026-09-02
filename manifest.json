@@ -1,0 +1,49 @@
+{
+  "manifest_version": 3,
+  "name": "GR | Direct Notes",
+  "version": "0.1.0",
+  "description": "Chrome MV3 микровиджет для локальных заметок к кампаниям и группам объявлений Яндекс.Директа.",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "activeTab",
+    "clipboardWrite",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://direct.yandex.ru/*",
+    "https://*.direct.yandex.ru/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://direct.yandex.ru/*",
+        "https://*.direct.yandex.ru/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "action": {
+    "default_title": "GR | Direct Notes",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  }
+}
