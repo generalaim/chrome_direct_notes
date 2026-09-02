@@ -295,6 +295,11 @@ function renderList() {
     const card = document.createElement("article");
     const isOnPage = isNoteOnPage(note);
     card.className = `note-card${isOnPage ? " is-current" : ""}`;
+    card.addEventListener("click", (event) => {
+      if (!event.target.closest("button")) {
+        openNoteOnPage(note);
+      }
+    });
 
     const head = document.createElement("div");
     head.className = "note-head";
@@ -341,12 +346,13 @@ function renderList() {
 
     head.append(titleWrap, badges);
 
+    const actions = document.createElement("div");
+    actions.className = "card-actions compact-actions";
+
     const text = document.createElement("p");
     text.className = "note-text";
     text.textContent = note.text;
 
-    const actions = document.createElement("div");
-    actions.className = "card-actions compact-actions";
     actions.append(
       actionButton("Копировать", "primary", () => copyNote(note)),
       actionButton("Удалить", "ghost danger", () => removeNote(note.id))
@@ -377,6 +383,31 @@ async function removeNote(id) {
 async function copyNote(note) {
   await navigator.clipboard.writeText(note.text);
   showToast("Текст скопирован");
+}
+
+async function openNoteOnPage(note) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+  if (!tab?.id || !isDirectUrl(tab.url || "")) {
+    showToast("Открой страницу Директа");
+    return;
+  }
+
+  try {
+    const response = await chrome.tabs.sendMessage(tab.id, {
+      type: "DIRECT_NOTES_OPEN_NOTE",
+      note
+    });
+
+    if (response?.ok === false) {
+      showToast(response.message || "Не удалось открыть заметку");
+      return;
+    }
+
+    showToast("Открыл заметку на странице");
+  } catch (error) {
+    showToast("Обнови страницу Директа");
+  }
 }
 
 async function notifyActiveTab() {
@@ -663,7 +694,7 @@ function normalizeNote(note) {
     entityId,
     name,
     url: String(note?.url || ""),
-    text: String(note?.text || "").trim(),
+    text: cleanNoteText(note?.text),
     createdAt: note?.createdAt || note?.updatedAt || new Date().toISOString(),
     updatedAt: note?.updatedAt || note?.createdAt || new Date().toISOString()
   };
@@ -766,6 +797,17 @@ function cleanId(value) {
 
 function cleanText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanNoteText(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
 }
 
 function cleanLogin(value) {

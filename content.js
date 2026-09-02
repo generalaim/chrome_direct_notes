@@ -22,7 +22,9 @@ const TARGETS = [
     selectors: [
       "[data-testid^='Grid.Cell-'][data-testid$='_Campaign_Campaign']",
       "[data-testid='Cell.Campaign_Campaign']",
-      "[data-testid='CampaignNameCell.Id']"
+      "[data-testid='CampaignNameCell.Id']",
+      "[data-testid='Captions.InfoCampaign'] [data-testid='ClickToCopyText']",
+      "[data-testid='CampaignsNavigationPanelHeader'] [data-testid='ClickToCopyText']"
     ],
     nameFields: ["Campaign_CampName"]
   },
@@ -31,7 +33,8 @@ const TARGETS = [
     selectors: [
       "[data-testid^='Grid.Cell-'][data-testid$='_Adgroup_AdgroupId']",
       "[data-testid='Cell.Adgroup_AdgroupId']",
-      "[data-testid='AdgroupNameCell.Id']"
+      "[data-testid='AdgroupNameCell.Id']",
+      "[data-testid^='GroupItem.'] [data-testid='ClickToCopyText']"
     ],
     nameFields: ["Adgroup_AdgroupName", "Adgroup_AdGroupName"]
   },
@@ -95,6 +98,23 @@ function bindEvents() {
       loadSettings().then(() => {
         fixedScanContext = null;
         syncPageIntegration();
+        sendResponse({ ok: true });
+      });
+      return true;
+    }
+
+    if (message?.type === "DIRECT_NOTES_OPEN_NOTE") {
+      loadSettings().then(() => {
+        syncPageIntegration();
+        const note = normalizeNote(message.note);
+        const entity = entityFromNote(note);
+
+        if (!settings.enabled || !entity?.key) {
+          sendResponse({ ok: false, message: "Маркер на странице выключен" });
+          return;
+        }
+
+        showEditor(entity, null);
         sendResponse({ ok: true });
       });
       return true;
@@ -437,7 +457,7 @@ function entityFromCell(cell, type) {
   const href = link?.href || "";
   const entityId = cleanId(ownText) || cleanId(href);
   const relatedName = relatedEntityName(rootCell, type);
-  const name = relatedName || (ownText !== entityId ? ownText : "");
+  const name = relatedName || (cleanId(ownText) === entityId ? "" : ownText);
 
   if (!entityId && !ownText && !name) {
     return null;
@@ -728,7 +748,7 @@ function stopDirectEvent(event) {
 }
 
 async function saveNote(entity, rawText) {
-  const text = cleanText(rawText);
+  const text = cleanNoteText(rawText);
 
   if (!text) {
     showInlineNotice("Пустую заметку не сохраняю");
@@ -803,7 +823,6 @@ function noteForEntityFromNotes(entity, notes) {
 function refreshGlobalHighlights() {
   const ranges = [];
   const matchedByKey = new Map();
-  const firstMatchByKey = new Map();
   const notesById = notesWithIds();
 
   if (!notesById.length) {
@@ -839,10 +858,6 @@ function refreshGlobalHighlights() {
       range.setEnd(node, index + note.entityId.length);
       ranges.push(range);
 
-      if (!firstMatchByKey.has(note.key)) {
-        firstMatchByKey.set(note.key, { note, range: range.cloneRange() });
-      }
-
       matchedByKey.set(note.key, note);
     });
 
@@ -854,7 +869,6 @@ function refreshGlobalHighlights() {
   }
 
   const matches = [...matchedByKey.values()];
-  addGlobalNoteButtons([...firstMatchByKey.values()]);
   return matches;
 }
 
@@ -1050,7 +1064,7 @@ function relatedEntityName(rootCell, type) {
   const row = rootCell.closest("[data-testid^='Grid.Row-']");
 
   if (!target?.nameFields?.length || !row) {
-    return "";
+    return nonGridEntityName(rootCell, type);
   }
 
   for (const field of target.nameFields) {
@@ -1070,7 +1084,25 @@ function relatedEntityName(rootCell, type) {
   return "";
 }
 
+function nonGridEntityName(rootCell, type) {
+  if (type === "campaign") {
+    return cleanEntityName(document.querySelector("[data-testid='CampaignHeader.TitleName']"))
+      || cleanEntityName(document.querySelector("[data-testid='CampaignsNavigationPanelHeader'] .PanelHeader_title__F3Sv7"));
+  }
+
+  if (type === "adgroup") {
+    const navigationItem = rootCell.closest("[data-testid^='GroupItem.'], [data-testid='NavigationItem']");
+    return cleanEntityName(navigationItem?.querySelector(".NavigationItem_title__TUIS2"));
+  }
+
+  return "";
+}
+
 function cleanEntityName(cell) {
+  if (!cell) {
+    return "";
+  }
+
   const textElement =
     cell.querySelector?.("a[href]") ||
     cell.querySelector?.("[data-testid='Text.Content']") ||
@@ -1186,7 +1218,7 @@ function normalizeNote(note) {
     entityId,
     name,
     url: String(note?.url || ""),
-    text: String(note?.text || "").trim(),
+    text: cleanNoteText(note?.text),
     createdAt: note?.createdAt || note?.updatedAt || new Date().toISOString(),
     updatedAt: note?.updatedAt || note?.createdAt || new Date().toISOString()
   };
@@ -1235,6 +1267,17 @@ function cleanId(value) {
 
 function cleanText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanNoteText(value) {
+  return String(value || "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/\n{4,}/g, "\n\n\n")
+    .trim();
 }
 
 function currentLogin() {
@@ -1523,6 +1566,7 @@ function injectStyle() {
     "  display: grid !important;",
     "  width: min(360px, calc(100vw - 24px)) !important;",
     "  max-width: calc(100vw - 24px) !important;",
+    "  max-height: calc(100vh - 24px) !important;",
     "  gap: 9px !important;",
     "  padding: 12px !important;",
     "  border: 1px solid rgba(94, 218, 255, .54) !important;",
@@ -1531,7 +1575,7 @@ function injectStyle() {
     "  color: #fff !important;",
     "  box-shadow: 0 18px 44px rgba(0, 0, 0, .42) !important;",
     "  font-family: Arial, sans-serif !important;",
-    "  overflow: hidden !important;",
+    "  overflow: auto !important;",
     "  transform: translate(-50%, -50%) !important;",
     "}",
     ".gr-direct-note-popover-title {",
@@ -1549,7 +1593,7 @@ function injectStyle() {
     "  width: 100% !important;",
     "  max-width: 100% !important;",
     "  min-width: 0 !important;",
-    "  min-height: 96px !important;",
+    "  min-height: 360px !important;",
     "  resize: vertical !important;",
     "  border: 1px solid #2a2d33 !important;",
     "  border-radius: 8px !important;",

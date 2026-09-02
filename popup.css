@@ -625,6 +625,7 @@ textarea::placeholder {
   border: 1px solid var(--hairline);
   border-radius: 8px;
   background: var(--card-soft);
+  cursor: pointer;
 }
 
 .note-card.is-current {
