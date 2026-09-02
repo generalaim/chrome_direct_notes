@@ -45,7 +45,7 @@ function bindEvents() {
     state.enabled = els.enabledToggle.checked;
     await saveState();
     await notifyActiveTab();
-    showToast(state.enabled ? "Кнопки З включены" : "Кнопки З выключены");
+    showToast(state.enabled ? "Плашки заметок включены" : "Плашки заметок выключены");
   });
 
   [els.campaignModeButton, els.adgroupModeButton, els.adModeButton].forEach((button) => {
@@ -113,12 +113,12 @@ async function updatePageStatus() {
   const isDirect = isDirectUrl(tab?.url || "");
 
   els.pageStatus.textContent = isDirect
-    ? "Страница Директа найдена. Кнопки З работают в таблицах."
+    ? "Страница Директа найдена. Плашка появляется при наведении."
     : "Открой страницу Яндекс.Директа.";
   els.currentBadge.textContent = isDirect ? "direct" : "нет";
   els.currentBadge.classList.toggle("is-found", isDirect);
   els.currentSubtitle.textContent = isDirect
-    ? "Нажми З у кампании, группы или объявления: поле заметки откроется прямо на странице."
+    ? "Наведи на кампанию, группу или объявление: поле заметки откроется по клику на плашку."
     : "Виджет не добавляет элементы и не слушает клики вне direct.yandex.ru.";
 }
 
@@ -174,10 +174,7 @@ function renderList() {
 
     const meta = document.createElement("div");
     meta.className = "note-meta";
-    meta.textContent = [
-      note.entityId ? `ID ${note.entityId}` : "без ID",
-      `Редактирование: ${formatDate(note.updatedAt || note.createdAt)}`
-    ].filter(Boolean).join(" · ");
+    meta.textContent = noteMetaText(note);
 
     titleWrap.append(title, meta);
 
@@ -277,6 +274,23 @@ function normalizeNote(note) {
     createdAt: note?.createdAt || note?.updatedAt || new Date().toISOString(),
     updatedAt: note?.updatedAt || note?.createdAt || new Date().toISOString()
   };
+}
+
+function noteMetaText(note) {
+  const parts = [];
+
+  if (note.entityId) {
+    parts.push(`ID ${note.entityId}`);
+  } else {
+    parts.push("без ID");
+  }
+
+  if (note.name && note.name !== note.entityId) {
+    parts.push(note.name);
+  }
+
+  parts.push(`Редактирование: ${formatDate(note.updatedAt || note.createdAt)}`);
+  return parts.join(" · ");
 }
 
 function normalizeType(value) {

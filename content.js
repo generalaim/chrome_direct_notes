@@ -44,6 +44,8 @@ let refreshTimer = null;
 let mutationObserver = null;
 let popover = null;
 let activeEntity = null;
+let hoverButton = null;
+let hoverHideTimer = null;
 
 init();
 
@@ -84,6 +86,7 @@ function bindEvents() {
   });
 
   document.addEventListener("click", handleOutsideClick, true);
+  document.addEventListener("mousemove", handleMouseMove, true);
   document.addEventListener("keydown", handleKeydown, true);
   window.addEventListener("scroll", scheduleRefresh, true);
   window.addEventListener("resize", scheduleRefresh);
@@ -120,12 +123,14 @@ function annotatePage() {
 
   if (!settings.enabled || !isDirectPage()) {
     hidePopover();
+    hideHoverButton();
     return 0;
   }
 
   const entities = pageEntities();
-  entities.forEach(addButtonForEntity);
-  return entities.length;
+  const notedEntities = entities.filter((entity) => noteForEntity(entity));
+  notedEntities.forEach(addPersistentButtonForEntity);
+  return notedEntities.length;
 }
 
 function pageEntities() {
@@ -170,14 +175,14 @@ function entityFromCell(cell, type) {
   });
 }
 
-function addButtonForEntity(entity) {
+function addPersistentButtonForEntity(entity) {
   if (entity.cell.querySelector(":scope > .gr-direct-note-button")) {
     updateButtonState(entity.cell.querySelector(":scope > .gr-direct-note-button"), entity);
     return;
   }
 
   const button = document.createElement("button");
-  button.className = "gr-direct-note-button";
+  button.className = "gr-direct-note-button has-note";
   button.type = "button";
   button.textContent = "З";
   button.title = "Заметка GR";
@@ -202,8 +207,78 @@ function updateButtonState(button, entity) {
     : `${NOTE_TYPES[entity.type]}: добавить заметку`;
 }
 
+function handleMouseMove(event) {
+  if (!settings.enabled || !isDirectPage() || popover) {
+    hideHoverButtonSoon();
+    return;
+  }
+
+  if (event.target?.closest?.(".gr-direct-note-hover, .gr-direct-note-button, .gr-direct-note-popover")) {
+    clearTimeout(hoverHideTimer);
+    return;
+  }
+
+  const cell = event.target?.closest?.(targetCellSelector());
+  const target = targetForCell(cell);
+  const entity = target ? entityFromCell(cell, target.type) : null;
+
+  if (!entity?.key) {
+    hideHoverButtonSoon();
+    return;
+  }
+
+  showHoverButton(entity, event.clientX, event.clientY);
+}
+
+function showHoverButton(entity, x, y) {
+  const note = noteForEntity(entity);
+
+  if (!hoverButton) {
+    hoverButton = document.createElement("button");
+    hoverButton.className = "gr-direct-note-hover";
+    hoverButton.type = "button";
+    hoverButton.textContent = "Заметка";
+    hoverButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (hoverButton.entity) {
+        showEditor(hoverButton.entity, hoverButton);
+        hideHoverButton();
+      }
+    });
+    hoverButton.addEventListener("mouseenter", () => clearTimeout(hoverHideTimer));
+    hoverButton.addEventListener("mouseleave", hideHoverButtonSoon);
+    document.documentElement.append(hoverButton);
+  }
+
+  hoverButton.entity = entity;
+  hoverButton.classList.toggle("has-note", Boolean(note));
+  hoverButton.textContent = note ? "Заметка есть" : "Добавить заметку";
+  hoverButton.title = note
+    ? `${NOTE_TYPES[entity.type]}: редактировать заметку`
+    : `${NOTE_TYPES[entity.type]}: добавить заметку`;
+  hoverButton.style.left = `${Math.max(8, Math.min(window.innerWidth - 190, x + 14))}px`;
+  hoverButton.style.top = `${Math.max(8, Math.min(window.innerHeight - 44, y + 12))}px`;
+  hoverButton.hidden = false;
+  clearTimeout(hoverHideTimer);
+  hoverHideTimer = setTimeout(hideHoverButton, 1150);
+}
+
+function hideHoverButtonSoon() {
+  clearTimeout(hoverHideTimer);
+  hoverHideTimer = setTimeout(hideHoverButton, 220);
+}
+
+function hideHoverButton() {
+  clearTimeout(hoverHideTimer);
+  hoverButton?.remove();
+  hoverButton = null;
+}
+
 function showEditor(entity, anchor) {
   activeEntity = entity;
+  hideHoverButton();
   hidePopover();
 
   const note = noteForEntity(entity);
@@ -217,11 +292,7 @@ function showEditor(entity, anchor) {
 
   const meta = document.createElement("div");
   meta.className = "gr-direct-note-popover-meta";
-  meta.textContent = [
-    entity.entityId ? `ID ${entity.entityId}` : "без ID",
-    entity.name,
-    note ? `Редактирование: ${formatDate(note.updatedAt || note.createdAt)}` : "Новая заметка"
-  ].filter(Boolean).join(" · ");
+  meta.textContent = entityMetaText(entity, note);
 
   const textarea = document.createElement("textarea");
   textarea.className = "gr-direct-note-popover-text";
@@ -327,6 +398,24 @@ function noteForEntity(entity) {
   return settings.notes.find((note) => note.key === entity.key) || null;
 }
 
+function entityMetaText(entity, note) {
+  const parts = [];
+  const name = cleanText(entity.name);
+
+  if (entity.entityId) {
+    parts.push(`ID ${entity.entityId}`);
+  } else {
+    parts.push("без ID");
+  }
+
+  if (name && name !== entity.entityId) {
+    parts.push(name);
+  }
+
+  parts.push(note ? `Редактирование: ${formatDate(note.updatedAt || note.createdAt)}` : "Новая заметка");
+  return parts.join(" · ");
+}
+
 function hidePopover() {
   popover?.remove();
   popover = null;
@@ -339,16 +428,20 @@ function placePopover(anchor) {
   }
 
   const rect = anchor.getBoundingClientRect();
-  const width = 320;
-  const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.left));
-  const top = Math.max(8, Math.min(window.innerHeight - 220, rect.bottom + 8));
+  const width = Math.min(360, window.innerWidth - 24);
+  const height = 236;
+  const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
+  const below = rect.bottom + 8;
+  const above = rect.top - height - 8;
+  const top = below + height <= window.innerHeight - 12 ? below : Math.max(12, above);
 
   popover.style.left = `${left}px`;
   popover.style.top = `${top}px`;
+  popover.style.width = `${width}px`;
 }
 
 function handleOutsideClick(event) {
-  if (!popover || popover.contains(event.target) || event.target.closest?.(".gr-direct-note-button")) {
+  if (!popover || popover.contains(event.target) || event.target.closest?.(".gr-direct-note-button, .gr-direct-note-hover")) {
     return;
   }
 
@@ -378,10 +471,24 @@ function showInlineNotice(message) {
 function clearStaleButtons() {
   document.querySelectorAll(".gr-direct-note-button").forEach((button) => {
     const cell = button.closest("[data-testid^='Grid.Cell-'], [data-testid^='Cell.']");
-    if (!cell || !isVisible(cell) || !settings.enabled) {
+    const hasStoredNote = settings.notes.some((note) => note.key === button.dataset.noteKey);
+
+    if (!cell || !isVisible(cell) || !settings.enabled || !hasStoredNote) {
       button.remove();
     }
   });
+}
+
+function targetCellSelector() {
+  return TARGETS.flatMap((target) => target.selectors).join(",");
+}
+
+function targetForCell(cell) {
+  if (!cell) {
+    return null;
+  }
+
+  return TARGETS.find((target) => target.selectors.some((selector) => cell.matches(selector)));
 }
 
 function normalizeNotes(notes) {
@@ -491,86 +598,122 @@ function injectStyle() {
     "  position: relative !important;",
     "}",
     ".gr-direct-note-button {",
-    "  position: absolute;",
-    "  right: 24px;",
-    "  top: 50%;",
-    "  z-index: 50;",
-    "  display: grid;",
-    "  width: 21px;",
-    "  height: 21px;",
-    "  place-items: center;",
-    "  border: 1px solid rgba(94, 218, 255, .62);",
-    "  border-radius: 999px;",
-    "  background: #111318;",
-    "  color: #8fe6ff;",
-    "  font: 700 12px/1 Arial, sans-serif;",
-    "  box-shadow: 0 6px 16px rgba(0, 0, 0, .18);",
-    "  transform: translateY(-50%);",
-    "  cursor: pointer;",
+    "  position: absolute !important;",
+    "  right: 24px !important;",
+    "  top: 50% !important;",
+    "  z-index: 50 !important;",
+    "  display: grid !important;",
+    "  width: 21px !important;",
+    "  height: 21px !important;",
+    "  min-width: 21px !important;",
+    "  min-height: 21px !important;",
+    "  padding: 0 !important;",
+    "  place-items: center !important;",
+    "  border: 1px solid rgba(47, 212, 125, .72) !important;",
+    "  border-radius: 999px !important;",
+    "  background: #159457 !important;",
+    "  color: #fff !important;",
+    "  font: 700 12px/1 Arial, sans-serif !important;",
+    "  box-shadow: 0 6px 16px rgba(0, 0, 0, .18) !important;",
+    "  transform: translateY(-50%) !important;",
+    "  cursor: pointer !important;",
     "}",
     ".gr-direct-note-button.has-note {",
-    "  border-color: rgba(47, 212, 125, .72);",
-    "  background: #159457;",
-    "  color: #fff;",
+    "  border-color: rgba(47, 212, 125, .72) !important;",
+    "  background: #159457 !important;",
+    "  color: #fff !important;",
+    "}",
+    ".gr-direct-note-hover {",
+    "  position: fixed !important;",
+    "  z-index: 2147483647 !important;",
+    "  display: inline-grid !important;",
+    "  min-width: 126px !important;",
+    "  min-height: 30px !important;",
+    "  place-items: center !important;",
+    "  padding: 0 11px !important;",
+    "  border: 1px solid rgba(94, 218, 255, .62) !important;",
+    "  border-radius: 999px !important;",
+    "  background: #111318 !important;",
+    "  color: #8fe6ff !important;",
+    "  font: 700 12px/16px Arial, sans-serif !important;",
+    "  box-shadow: 0 8px 20px rgba(0, 0, 0, .26) !important;",
+    "  cursor: pointer !important;",
+    "}",
+    ".gr-direct-note-hover.has-note {",
+    "  border-color: rgba(47, 212, 125, .72) !important;",
+    "  background: #159457 !important;",
+    "  color: #fff !important;",
     "}",
     ".gr-direct-note-popover {",
-    "  position: fixed;",
-    "  z-index: 2147483647;",
-    "  display: grid;",
-    "  width: 320px;",
-    "  gap: 9px;",
-    "  padding: 12px;",
-    "  border: 1px solid rgba(47, 212, 125, .42);",
-    "  border-radius: 8px;",
-    "  background: #191919;",
-    "  color: #fff;",
-    "  box-shadow: 0 18px 44px rgba(0, 0, 0, .42);",
-    "  font-family: Arial, sans-serif;",
+    "  position: fixed !important;",
+    "  z-index: 2147483647 !important;",
+    "  box-sizing: border-box !important;",
+    "  display: grid !important;",
+    "  width: min(360px, calc(100vw - 24px)) !important;",
+    "  max-width: calc(100vw - 24px) !important;",
+    "  gap: 9px !important;",
+    "  padding: 12px !important;",
+    "  border: 1px solid rgba(47, 212, 125, .42) !important;",
+    "  border-radius: 8px !important;",
+    "  background: #191919 !important;",
+    "  color: #fff !important;",
+    "  box-shadow: 0 18px 44px rgba(0, 0, 0, .42) !important;",
+    "  font-family: Arial, sans-serif !important;",
+    "  overflow: hidden !important;",
     "}",
     ".gr-direct-note-popover-title {",
-    "  font: 700 14px/18px Arial, sans-serif;",
+    "  font: 700 14px/18px Arial, sans-serif !important;",
     "}",
     ".gr-direct-note-popover-meta {",
-    "  color: #8c9199;",
-    "  font: 500 11px/15px Consolas, monospace;",
+    "  max-width: 100% !important;",
+    "  overflow-wrap: anywhere !important;",
+    "  color: #8c9199 !important;",
+    "  font: 500 11px/15px Consolas, monospace !important;",
     "}",
     ".gr-direct-note-popover-text {",
-    "  width: 100%;",
-    "  min-height: 96px;",
-    "  resize: vertical;",
-    "  border: 1px solid #2a2d33;",
-    "  border-radius: 8px;",
-    "  outline: 0;",
-    "  background: #101216;",
-    "  color: #fff;",
-    "  padding: 9px 10px;",
-    "  font: 500 13px/18px Arial, sans-serif;",
+    "  box-sizing: border-box !important;",
+    "  display: block !important;",
+    "  width: 100% !important;",
+    "  max-width: 100% !important;",
+    "  min-width: 0 !important;",
+    "  min-height: 96px !important;",
+    "  resize: vertical !important;",
+    "  border: 1px solid #2a2d33 !important;",
+    "  border-radius: 8px !important;",
+    "  outline: 0 !important;",
+    "  background: #101216 !important;",
+    "  color: #fff !important;",
+    "  padding: 9px 10px !important;",
+    "  font: 500 13px/18px Arial, sans-serif !important;",
     "}",
     ".gr-direct-note-popover-text:focus {",
-    "  border-color: rgba(47, 212, 125, .58);",
+    "  border-color: rgba(47, 212, 125, .58) !important;",
     "}",
     ".gr-direct-note-popover-actions {",
-    "  display: grid;",
-    "  grid-template-columns: minmax(0, 1fr) auto auto;",
-    "  gap: 7px;",
+    "  display: grid !important;",
+    "  grid-template-columns: minmax(0, 1fr) auto auto !important;",
+    "  gap: 7px !important;",
+    "  max-width: 100% !important;",
     "}",
     ".gr-direct-note-popover-button {",
-    "  min-height: 32px;",
-    "  padding: 0 10px;",
-    "  border: 1px solid rgba(255, 255, 255, .22);",
-    "  border-radius: 999px;",
-    "  background: transparent;",
-    "  color: #dadbdf;",
-    "  font: 500 12px/16px Arial, sans-serif;",
-    "  cursor: pointer;",
+    "  box-sizing: border-box !important;",
+    "  min-height: 32px !important;",
+    "  padding: 0 10px !important;",
+    "  border: 1px solid rgba(255, 255, 255, .22) !important;",
+    "  border-radius: 999px !important;",
+    "  background: transparent !important;",
+    "  color: #dadbdf !important;",
+    "  font: 500 12px/16px Arial, sans-serif !important;",
+    "  white-space: nowrap !important;",
+    "  cursor: pointer !important;",
     "}",
     ".gr-direct-note-popover-button.primary {",
-    "  background: #fff;",
-    "  color: #0a0a0a;",
+    "  background: #fff !important;",
+    "  color: #0a0a0a !important;",
     "}",
     ".gr-direct-note-popover-button.danger {",
-    "  border-color: rgba(255, 56, 72, .48);",
-    "  color: #ff7a86;",
+    "  border-color: rgba(255, 56, 72, .48) !important;",
+    "  color: #ff7a86 !important;",
     "}",
     ".gr-direct-note-popover-button:disabled {",
     "  opacity: .42;",
