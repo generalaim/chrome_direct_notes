@@ -330,7 +330,16 @@ function renderList() {
     type.className = "note-type";
     type.textContent = isOnPage ? "На странице" : NOTE_TYPES[note.type].one;
 
-    head.append(titleWrap, type);
+    const age = document.createElement("span");
+    age.className = `note-age ${noteAgeClass(note)}`;
+    age.title = `Создана: ${formatDate(note.createdAt || note.updatedAt)}`;
+    age.textContent = noteAgeText(note);
+
+    const badges = document.createElement("div");
+    badges.className = "note-badges";
+    badges.append(age, type);
+
+    head.append(titleWrap, badges);
 
     const text = document.createElement("p");
     text.className = "note-text";
@@ -693,6 +702,50 @@ function noteTitleText(note) {
   }
 
   return `${NOTE_TYPES[note.type].one} без номера`;
+}
+
+function noteAgeText(note) {
+  const days = noteAgeDays(note);
+  return `${days} ${dayWord(days)}`;
+}
+
+function noteAgeClass(note) {
+  const days = noteAgeDays(note);
+
+  if (days >= 15) {
+    return "is-old";
+  }
+
+  if (days >= 8) {
+    return "is-watch";
+  }
+
+  return "is-fresh";
+}
+
+function noteAgeDays(note) {
+  const created = new Date(note.createdAt || note.updatedAt || 0);
+
+  if (Number.isNaN(created.getTime())) {
+    return 0;
+  }
+
+  return Math.max(0, Math.floor((Date.now() - created.getTime()) / 86400000));
+}
+
+function dayWord(value) {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+
+  if (mod10 === 1 && mod100 !== 11) {
+    return "день";
+  }
+
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return "дня";
+  }
+
+  return "дней";
 }
 
 function normalizeType(value) {

@@ -479,7 +479,8 @@ h2 {
 }
 
 .count-pill,
-.note-type {
+.note-type,
+.note-age {
   display: inline-grid;
   min-height: 24px;
   place-items: center;
@@ -683,10 +684,34 @@ textarea::placeholder {
   overflow-wrap: anywhere;
 }
 
-.note-type {
+.note-badges {
   position: absolute;
   top: 0;
   right: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.note-age {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink-soft);
+}
+
+.note-age.is-watch {
+  border-color: rgba(255, 164, 74, 0.72);
+  background: rgba(255, 164, 74, 0.16);
+  color: #ffd3a3;
+}
+
+.note-age.is-old {
+  border-color: rgba(255, 56, 72, 0.64);
+  background: rgba(255, 56, 72, 0.16);
+  color: #ffb0b8;
+}
+
+.note-type {
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--ink-soft);
