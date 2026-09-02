@@ -20,6 +20,7 @@
         <div class="mode-tabs" aria-label="Тип заметки">
           <button class="mode-tab" id="campaignModeButton" type="button" data-note-type="campaign">Кампании</button>
           <button class="mode-tab" id="adgroupModeButton" type="button" data-note-type="adgroup">Группы</button>
+          <button class="mode-tab" id="adModeButton" type="button" data-note-type="ad">Объявления</button>
         </div>
       </section>
 
@@ -32,7 +33,7 @@
                 class="info-tip"
                 type="button"
                 aria-label="Подсказка по маркеру"
-                data-tooltip="Если включено и у текущей кампании или группы есть заметка, на странице Директа появится компактная зеленая пометка."
+                data-tooltip="Если включено, в таблицах Директа появятся кнопки З возле кампаний, групп и объявлений. Зеленая кнопка означает, что заметка уже есть."
               >
                 ?
               </button>
@@ -50,18 +51,13 @@
         <div class="panel-head">
           <div>
             <div class="title-row">
-              <h2 id="currentTitle">Текущая сущность</h2>
-              <span class="count-pill" id="currentBadge">нет ID</span>
+              <h2>Работа на странице</h2>
+              <span class="count-pill" id="currentBadge">inline</span>
             </div>
-            <p class="status-line" id="currentSubtitle">Открой кампанию или группу в Директе.</p>
+            <p class="status-line" id="currentSubtitle">Включи маркер и нажимай З рядом с кампанией, группой или объявлением в таблице.</p>
           </div>
           <button class="mini-action" id="refreshButton" type="button">Обновить</button>
         </div>
-
-        <form class="note-form" id="noteForm">
-          <textarea id="noteText" rows="4" placeholder="Что делали, что проверить через неделю, какие решения учесть"></textarea>
-          <button class="primary wide" id="saveButton" type="submit">Сохранить заметку</button>
-        </form>
       </section>
 
       <section class="panel">
@@ -71,7 +67,6 @@
             <span class="count-pill" id="typeCount">0 шт.</span>
           </div>
           <div class="mini-actions">
-            <button class="mini-action" id="copyCurrentButton" type="button">Копия</button>
             <button class="mini-action danger" id="clearTypeButton" type="button">Очистить</button>
           </div>
         </div>

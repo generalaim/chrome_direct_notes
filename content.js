@@ -6,15 +6,44 @@ if (globalThis.__DIRECT_NOTES_CONTENT_SCRIPT_LOADED) {
 globalThis.__DIRECT_NOTES_CONTENT_SCRIPT_LOADED = true;
 
 const STORAGE_KEY = "directNotesWidget";
-const MARKER_CLASS = "gr-direct-note-marker";
-const HIGHLIGHT_CLASS = "gr-direct-note-highlight";
+const NOTE_TYPES = {
+  campaign: "Кампания",
+  adgroup: "Группа",
+  ad: "Объявление"
+};
+const TARGETS = [
+  {
+    type: "campaign",
+    selectors: [
+      "[data-testid^='Grid.Cell-'][data-testid$='_Campaign_Campaign']",
+      "[data-testid='Cell.Campaign_Campaign']"
+    ]
+  },
+  {
+    type: "adgroup",
+    selectors: [
+      "[data-testid^='Grid.Cell-'][data-testid$='_Adgroup_AdgroupId']",
+      "[data-testid='Cell.Adgroup_AdgroupId']"
+    ]
+  },
+  {
+    type: "ad",
+    selectors: [
+      "[data-testid^='Grid.Cell-'][data-testid$='_Banner_Banner']",
+      "[data-testid='Cell.Banner_Banner']"
+    ]
+  }
+];
 
 let settings = {
-  enabled: false,
+  enabled: true,
+  activeType: "campaign",
   notes: []
 };
 let refreshTimer = null;
 let mutationObserver = null;
+let popover = null;
+let activeEntity = null;
 
 init();
 
@@ -32,14 +61,14 @@ async function init() {
 function bindEvents() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "DIRECT_NOTES_GET_CONTEXT") {
-      sendResponse({ context: getPageContext(), matches: matchedNotes() });
+      sendResponse({ ok: true, annotated: annotatePage() });
       return true;
     }
 
     if (message?.type === "DIRECT_NOTES_STATE_UPDATED") {
       loadSettings().then(() => {
         scheduleRefresh();
-        sendResponse({ ok: true, context: getPageContext(), matches: matchedNotes() });
+        sendResponse({ ok: true });
       });
       return true;
     }
@@ -54,9 +83,10 @@ function bindEvents() {
     scheduleRefresh();
   });
 
-  window.addEventListener("popstate", scheduleRefresh);
-  window.addEventListener("hashchange", scheduleRefresh);
-  document.addEventListener("visibilitychange", scheduleRefresh);
+  document.addEventListener("click", handleOutsideClick, true);
+  document.addEventListener("keydown", handleKeydown, true);
+  window.addEventListener("scroll", scheduleRefresh, true);
+  window.addEventListener("resize", scheduleRefresh);
   observePage();
 }
 
@@ -66,8 +96,9 @@ async function loadSettings() {
 }
 
 function applySettings(saved) {
-  settings.enabled = saved.enabled === true;
-  settings.notes = Array.isArray(saved.notes) ? saved.notes.map(normalizeNote).filter((note) => note.key && note.text) : [];
+  settings.enabled = saved.enabled !== false;
+  settings.activeType = normalizeType(saved.activeType);
+  settings.notes = Array.isArray(saved.notes) ? normalizeNotes(saved.notes) : [];
 }
 
 function observePage() {
@@ -81,254 +112,331 @@ function observePage() {
 
 function scheduleRefresh() {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refreshMarker, 180);
+  refreshTimer = setTimeout(annotatePage, 160);
 }
 
-function refreshMarker() {
-  clearPageMarker();
+function annotatePage() {
+  clearStaleButtons();
 
   if (!settings.enabled || !isDirectPage()) {
-    return;
+    hidePopover();
+    return 0;
   }
 
-  const matches = matchedNotes();
-
-  if (!matches.length) {
-    return;
-  }
-
-  markPrimaryHeading(matches[0]);
-  showFloatingMarker(matches);
+  const entities = pageEntities();
+  entities.forEach(addButtonForEntity);
+  return entities.length;
 }
 
-function matchedNotes() {
-  const keys = contextKeys(getPageContext());
-  return settings.notes.filter((note) => keys.has(note.key));
-}
+function pageEntities() {
+  const byKey = new Map();
 
-function contextKeys(context) {
-  const keys = new Set();
+  TARGETS.forEach((target) => {
+    document.querySelectorAll(target.selectors.join(",")).forEach((cell) => {
+      const entity = entityFromCell(cell, target.type);
 
-  ["campaign", "adgroup"].forEach((type) => {
-    const item = context?.[type];
-
-    if (item?.key) {
-      keys.add(item.key);
-    }
+      if (entity?.key && !byKey.has(entity.key)) {
+        byKey.set(entity.key, entity);
+      }
+    });
   });
 
-  return keys;
+  return [...byKey.values()];
 }
 
-function getPageContext() {
-  const url = location.href;
-  const title = pageTitle();
-  const campaignId = idFromUrl(url, ["campaignId", "cid", "campaign_id"]) || pathId(/campaigns?\/(\d+)/i);
-  const adgroupId = idFromUrl(url, ["adGroupId", "adgroupId", "groupId", "adgroup_id"]) || pathId(/(?:adgroups?|groups?)\/(\d+)/i);
-  const names = entityNames(title);
+function entityFromCell(cell, type) {
+  const rootCell = cell.closest("[data-testid^='Grid.Cell-']") || cell;
 
-  return {
-    url,
-    title,
-    campaign: normalizeContextItem({
-      id: campaignId,
-      name: names.campaign || (campaignId ? `Кампания ${campaignId}` : title)
-    }, "campaign", url),
-    adgroup: normalizeContextItem({
-      id: adgroupId,
-      name: names.adgroup || (adgroupId ? `Группа ${adgroupId}` : "")
-    }, "adgroup", url)
-  };
-}
-
-function entityNames(title) {
-  const crumbs = [...document.querySelectorAll("nav a, nav span, [aria-label*='readcrumb'] a, [aria-label*='readcrumb'] span")]
-    .map(textFromNode)
-    .filter(Boolean);
-  const visibleTitle = title || crumbs.at(-1) || "";
-  const campaignLabel = textNearLabels(["кампания", "campaign"]) || visibleTitle;
-  const adgroupLabel = textNearLabels(["группа", "ad group", "adgroup"]);
-
-  return {
-    campaign: cleanEntityTitle(campaignLabel || crumbs.at(-2) || visibleTitle),
-    adgroup: cleanEntityTitle(adgroupLabel || "")
-  };
-}
-
-function textNearLabels(labels) {
-  const candidates = [...document.querySelectorAll("h1, h2, [data-testid], [aria-label], label, span, div")]
-    .slice(0, 900);
-
-  for (const node of candidates) {
-    if (isFormElement(node)) {
-      continue;
-    }
-
-    const ownText = textFromNode(node);
-    const marker = [
-      ownText,
-      node.getAttribute?.("aria-label") || "",
-      node.getAttribute?.("data-testid") || ""
-    ].join(" ").toLowerCase();
-
-    if (!labels.some((label) => marker.includes(label))) {
-      continue;
-    }
-
-    const value = ownText
-      .replace(/^(?:кампания|campaign|группа|ad\s*group|adgroup)\s*[:#-]?\s*/i, "")
-      .trim();
-
-    if (value && value.length <= 120) {
-      return value;
-    }
+  if (!isVisible(rootCell) || isTotalCell(rootCell) || shouldIgnoreCell(rootCell)) {
+    return null;
   }
 
-  return "";
-}
+  const link = rootCell.querySelector("a[href]");
+  const textNode = rootCell.querySelector("[data-testid='Text.Content']") || rootCell.querySelector("[data-testid='Text']") || link || rootCell;
+  const name = cleanText(link?.textContent || textNode?.textContent || "");
+  const href = link?.href || "";
+  const entityId = cleanId(name) || cleanId(href);
 
-function pageTitle() {
-  const candidates = [
-    document.querySelector("h1"),
-    document.querySelector("[data-testid*='Header'] h1"),
-    document.querySelector("[data-testid*='Title']"),
-    document.querySelector("main h1")
-  ];
-
-  return cleanEntityTitle(candidates.map(textFromNode).find(Boolean) || document.title.replace(/\s*[—|-]\s*Яндекс.Директ.*$/i, ""));
-}
-
-function markPrimaryHeading(note) {
-  const target = document.querySelector("h1") || document.querySelector("main");
-
-  if (!target || isFormElement(target)) {
-    return;
+  if (!entityId && !name) {
+    return null;
   }
 
-  target.classList.add(HIGHLIGHT_CLASS);
-  target.setAttribute("data-gr-direct-note", note.text.slice(0, 160));
-}
-
-function showFloatingMarker(matches) {
-  const marker = document.createElement("button");
-  marker.className = MARKER_CLASS;
-  marker.type = "button";
-  marker.title = matches.map((note) => note.text).join("\n\n");
-  marker.textContent = matches.length > 1 ? `GR Notes: ${matches.length}` : "GR Note";
-  marker.addEventListener("click", () => {
-    marker.classList.toggle("is-open");
-  });
-
-  const body = document.createElement("span");
-  body.className = "gr-direct-note-marker-body";
-  body.textContent = matches[0].text;
-  marker.append(body);
-  document.documentElement.append(marker);
-}
-
-function clearPageMarker() {
-  document.querySelectorAll(`.${MARKER_CLASS}`).forEach((node) => node.remove());
-  document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach((node) => {
-    node.classList.remove(HIGHLIGHT_CLASS);
-    node.removeAttribute("data-gr-direct-note");
+  return normalizeEntity({
+    type,
+    entityId,
+    name: name || entityId,
+    url: href || location.href,
+    cell: rootCell
   });
 }
 
-function injectStyle() {
-  const style = document.createElement("style");
-  style.textContent = [
-    ".gr-direct-note-marker {",
-    "  position: fixed;",
-    "  right: 18px;",
-    "  top: 78px;",
-    "  z-index: 2147483647;",
-    "  display: grid;",
-    "  max-width: min(340px, calc(100vw - 32px));",
-    "  padding: 8px 11px;",
-    "  border: 1px solid rgba(47, 212, 125, .58);",
-    "  border-radius: 999px;",
-    "  background: #159457;",
-    "  color: #fff;",
-    "  font: 700 13px/1.25 Arial, sans-serif;",
-    "  box-shadow: 0 12px 28px rgba(47, 212, 125, .26);",
-    "  cursor: pointer;",
-    "}",
-    ".gr-direct-note-marker-body {",
-    "  display: none;",
-    "  max-width: 310px;",
-    "  margin-top: 7px;",
-    "  color: rgba(255,255,255,.92);",
-    "  font: 500 12px/1.4 Arial, sans-serif;",
-    "  white-space: pre-wrap;",
-    "  text-align: left;",
-    "}",
-    ".gr-direct-note-marker.is-open {",
-    "  border-radius: 8px;",
-    "}",
-    ".gr-direct-note-marker.is-open .gr-direct-note-marker-body {",
-    "  display: block;",
-    "}",
-    ".gr-direct-note-highlight {",
-    "  outline: 2px solid rgba(47, 212, 125, .72) !important;",
-    "  outline-offset: 4px !important;",
-    "  border-radius: 8px !important;",
-    "}"
-  ].join("\n");
-  document.documentElement.append(style);
+function addButtonForEntity(entity) {
+  if (entity.cell.querySelector(":scope > .gr-direct-note-button")) {
+    updateButtonState(entity.cell.querySelector(":scope > .gr-direct-note-button"), entity);
+    return;
+  }
+
+  const button = document.createElement("button");
+  button.className = "gr-direct-note-button";
+  button.type = "button";
+  button.textContent = "З";
+  button.title = "Заметка GR";
+  button.setAttribute("aria-label", `Заметка: ${NOTE_TYPES[entity.type]}`);
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showEditor(entity, button);
+  });
+
+  updateButtonState(button, entity);
+  entity.cell.classList.add("gr-direct-note-cell");
+  entity.cell.append(button);
+}
+
+function updateButtonState(button, entity) {
+  const note = noteForEntity(entity);
+  button.classList.toggle("has-note", Boolean(note));
+  button.dataset.noteKey = entity.key;
+  button.title = note
+    ? `${NOTE_TYPES[entity.type]}: заметка есть. Редактирование: ${formatDate(note.updatedAt || note.createdAt)}`
+    : `${NOTE_TYPES[entity.type]}: добавить заметку`;
+}
+
+function showEditor(entity, anchor) {
+  activeEntity = entity;
+  hidePopover();
+
+  const note = noteForEntity(entity);
+  popover = document.createElement("section");
+  popover.className = "gr-direct-note-popover";
+  popover.addEventListener("click", (event) => event.stopPropagation());
+
+  const title = document.createElement("div");
+  title.className = "gr-direct-note-popover-title";
+  title.textContent = NOTE_TYPES[entity.type];
+
+  const meta = document.createElement("div");
+  meta.className = "gr-direct-note-popover-meta";
+  meta.textContent = [
+    entity.entityId ? `ID ${entity.entityId}` : "без ID",
+    entity.name,
+    note ? `Редактирование: ${formatDate(note.updatedAt || note.createdAt)}` : "Новая заметка"
+  ].filter(Boolean).join(" · ");
+
+  const textarea = document.createElement("textarea");
+  textarea.className = "gr-direct-note-popover-text";
+  textarea.rows = 5;
+  textarea.placeholder = "Комментарий по работе, проверке, гипотезе или изменению";
+  textarea.value = note?.text || "";
+
+  const actions = document.createElement("div");
+  actions.className = "gr-direct-note-popover-actions";
+
+  const save = popoverButton(note ? "Сохранить" : "Добавить", "primary", async () => {
+    await saveNote(entity, textarea.value);
+  });
+  const remove = popoverButton("Удалить", "danger", async () => {
+    await removeNote(entity);
+  });
+  const close = popoverButton("Закрыть", "ghost", hidePopover);
+
+  remove.disabled = !note;
+  actions.append(save, remove, close);
+  popover.append(title, meta, textarea, actions);
+  document.documentElement.append(popover);
+  placePopover(anchor);
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+}
+
+function popoverButton(label, kind, handler) {
+  const button = document.createElement("button");
+  button.className = `gr-direct-note-popover-button ${kind}`;
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    handler();
+  });
+  return button;
+}
+
+async function saveNote(entity, rawText) {
+  const text = cleanText(rawText);
+
+  if (!text) {
+    showInlineNotice("Пустую заметку не сохраняю");
+    return;
+  }
+
+  const data = await chrome.storage.local.get(STORAGE_KEY);
+  const saved = data[STORAGE_KEY] || {};
+  const notes = Array.isArray(saved.notes) ? normalizeNotes(saved.notes) : [];
+  const now = new Date().toISOString();
+  const existing = notes.find((note) => note.key === entity.key);
+  const nextNote = normalizeNote({
+    id: existing?.id || crypto.randomUUID(),
+    type: entity.type,
+    key: entity.key,
+    entityId: entity.entityId,
+    name: entity.name,
+    url: entity.url,
+    text,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  });
+  const nextNotes = [nextNote, ...notes.filter((note) => note.key !== entity.key)];
+
+  await chrome.storage.local.set({
+    [STORAGE_KEY]: {
+      ...saved,
+      enabled: settings.enabled,
+      activeType: entity.type,
+      notes: nextNotes
+    }
+  });
+
+  applySettings({ ...saved, enabled: settings.enabled, activeType: entity.type, notes: nextNotes });
+  hidePopover();
+  scheduleRefresh();
+  showInlineNotice(existing ? "Заметка обновлена" : "Заметка добавлена");
+}
+
+async function removeNote(entity) {
+  const data = await chrome.storage.local.get(STORAGE_KEY);
+  const saved = data[STORAGE_KEY] || {};
+  const notes = Array.isArray(saved.notes) ? normalizeNotes(saved.notes) : [];
+  const nextNotes = notes.filter((note) => note.key !== entity.key);
+
+  await chrome.storage.local.set({
+    [STORAGE_KEY]: {
+      ...saved,
+      enabled: settings.enabled,
+      notes: nextNotes
+    }
+  });
+
+  applySettings({ ...saved, enabled: settings.enabled, notes: nextNotes });
+  hidePopover();
+  scheduleRefresh();
+  showInlineNotice("Заметка удалена");
+}
+
+function noteForEntity(entity) {
+  return settings.notes.find((note) => note.key === entity.key) || null;
+}
+
+function hidePopover() {
+  popover?.remove();
+  popover = null;
+  activeEntity = null;
+}
+
+function placePopover(anchor) {
+  if (!popover || !anchor) {
+    return;
+  }
+
+  const rect = anchor.getBoundingClientRect();
+  const width = 320;
+  const left = Math.max(8, Math.min(window.innerWidth - width - 8, rect.left));
+  const top = Math.max(8, Math.min(window.innerHeight - 220, rect.bottom + 8));
+
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+}
+
+function handleOutsideClick(event) {
+  if (!popover || popover.contains(event.target) || event.target.closest?.(".gr-direct-note-button")) {
+    return;
+  }
+
+  hidePopover();
+}
+
+function handleKeydown(event) {
+  if (event.key === "Escape") {
+    hidePopover();
+  }
+
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && popover && activeEntity) {
+    event.preventDefault();
+    const textarea = popover.querySelector("textarea");
+    saveNote(activeEntity, textarea?.value || "");
+  }
+}
+
+function showInlineNotice(message) {
+  const notice = document.createElement("div");
+  notice.className = "gr-direct-note-notice";
+  notice.textContent = message;
+  document.documentElement.append(notice);
+  setTimeout(() => notice.remove(), 1400);
+}
+
+function clearStaleButtons() {
+  document.querySelectorAll(".gr-direct-note-button").forEach((button) => {
+    const cell = button.closest("[data-testid^='Grid.Cell-'], [data-testid^='Cell.']");
+    if (!cell || !isVisible(cell) || !settings.enabled) {
+      button.remove();
+    }
+  });
+}
+
+function normalizeNotes(notes) {
+  const byKey = new Map();
+
+  notes.forEach((note) => {
+    const normalized = normalizeNote(note);
+
+    if (normalized.key && normalized.text) {
+      byKey.set(normalized.key, normalized);
+    }
+  });
+
+  return [...byKey.values()];
 }
 
 function normalizeNote(note) {
-  const type = note?.type === "adgroup" ? "adgroup" : "campaign";
-  const item = normalizeContextItem({
-    id: note?.entityId,
-    name: note?.name,
-    fallback: note?.url
-  }, type, note?.url || "");
+  const type = normalizeType(note?.type);
+  const entityId = cleanId(note?.entityId);
+  const name = cleanText(note?.name);
+  const fallback = cleanText(note?.url);
+  const keySource = entityId || normalizeName(name) || normalizeName(fallback);
 
   return {
-    ...note,
+    id: note?.id || crypto.randomUUID(),
     type,
-    key: item.key,
-    text: String(note?.text || "").trim()
-  };
-}
-
-function normalizeContextItem(item, type, url) {
-  const id = cleanId(item?.id || item?.entityId);
-  const name = cleanText(item?.name);
-  const fallback = cleanText(item?.fallback || url);
-  const keySource = id || normalizeName(name) || normalizeUrlKey(fallback);
-  const key = keySource ? `${type}:${keySource}` : "";
-
-  return {
-    type,
-    id,
+    key: keySource ? `${type}:${keySource}` : "",
+    entityId,
     name,
-    key,
-    url: String(url || "")
+    url: String(note?.url || ""),
+    text: String(note?.text || "").trim(),
+    createdAt: note?.createdAt || note?.updatedAt || new Date().toISOString(),
+    updatedAt: note?.updatedAt || note?.createdAt || new Date().toISOString()
   };
 }
 
-function idFromUrl(url, names) {
-  try {
-    const params = new URL(url).searchParams;
+function normalizeEntity(entity) {
+  const type = normalizeType(entity?.type);
+  const entityId = cleanId(entity?.entityId);
+  const name = cleanText(entity?.name);
+  const url = String(entity?.url || location.href);
+  const keySource = entityId || normalizeName(name) || normalizeName(url);
 
-    for (const name of names) {
-      const value = cleanId(params.get(name));
-
-      if (value) {
-        return value;
-      }
-    }
-  } catch (error) {
-    return "";
-  }
-
-  return "";
+  return {
+    type,
+    key: keySource ? `${type}:${keySource}` : "",
+    entityId,
+    name,
+    url,
+    cell: entity.cell
+  };
 }
 
-function pathId(pattern) {
-  return cleanId(pattern.exec(location.pathname)?.[1]);
+function normalizeType(value) {
+  return ["campaign", "adgroup", "ad"].includes(value) ? value : "campaign";
 }
 
 function cleanId(value) {
@@ -339,34 +447,148 @@ function cleanText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
 }
 
-function cleanEntityTitle(value) {
-  return cleanText(value)
-    .replace(/^(?:кампания|campaign|группа|ad\s*group|adgroup)\s*[:#-]?\s*/i, "")
-    .replace(/\s*[—|-]\s*Яндекс.Директ.*$/i, "");
-}
-
 function normalizeName(value) {
   return cleanText(value).toLowerCase().replaceAll("ё", "е").replace(/[^а-яa-z0-9]+/gi, "-").replace(/^-+|-+$/g, "");
 }
 
-function normalizeUrlKey(value) {
-  try {
-    const url = new URL(value);
-    return normalizeName(`${url.pathname}${url.search}`);
-  } catch (error) {
-    return normalizeName(value);
+function formatDate(value) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
   }
+
+  return date.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
-function textFromNode(node) {
-  return cleanText(node?.innerText || node?.textContent || "");
+function isTotalCell(cell) {
+  return /итого|всего/i.test(cleanText(cell.textContent));
 }
 
-function isFormElement(node) {
-  return Boolean(node?.closest?.("input, textarea, select, button, [contenteditable='true'], [role='textbox']"));
+function shouldIgnoreCell(cell) {
+  return Boolean(cell.closest("[data-testid^='Grid.HeaderCell'], [data-testid='TotalSubHeader']"));
+}
+
+function isVisible(element) {
+  const rect = element.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0 && rect.bottom >= 0 && rect.top <= window.innerHeight;
 }
 
 function isDirectPage() {
   return /^https:\/\/([^/]+\.)?direct\.yandex\.ru\//.test(location.href);
+}
+
+function injectStyle() {
+  const style = document.createElement("style");
+  style.textContent = [
+    ".gr-direct-note-cell {",
+    "  position: relative !important;",
+    "}",
+    ".gr-direct-note-button {",
+    "  position: absolute;",
+    "  right: 24px;",
+    "  top: 50%;",
+    "  z-index: 50;",
+    "  display: grid;",
+    "  width: 21px;",
+    "  height: 21px;",
+    "  place-items: center;",
+    "  border: 1px solid rgba(94, 218, 255, .62);",
+    "  border-radius: 999px;",
+    "  background: #111318;",
+    "  color: #8fe6ff;",
+    "  font: 700 12px/1 Arial, sans-serif;",
+    "  box-shadow: 0 6px 16px rgba(0, 0, 0, .18);",
+    "  transform: translateY(-50%);",
+    "  cursor: pointer;",
+    "}",
+    ".gr-direct-note-button.has-note {",
+    "  border-color: rgba(47, 212, 125, .72);",
+    "  background: #159457;",
+    "  color: #fff;",
+    "}",
+    ".gr-direct-note-popover {",
+    "  position: fixed;",
+    "  z-index: 2147483647;",
+    "  display: grid;",
+    "  width: 320px;",
+    "  gap: 9px;",
+    "  padding: 12px;",
+    "  border: 1px solid rgba(47, 212, 125, .42);",
+    "  border-radius: 8px;",
+    "  background: #191919;",
+    "  color: #fff;",
+    "  box-shadow: 0 18px 44px rgba(0, 0, 0, .42);",
+    "  font-family: Arial, sans-serif;",
+    "}",
+    ".gr-direct-note-popover-title {",
+    "  font: 700 14px/18px Arial, sans-serif;",
+    "}",
+    ".gr-direct-note-popover-meta {",
+    "  color: #8c9199;",
+    "  font: 500 11px/15px Consolas, monospace;",
+    "}",
+    ".gr-direct-note-popover-text {",
+    "  width: 100%;",
+    "  min-height: 96px;",
+    "  resize: vertical;",
+    "  border: 1px solid #2a2d33;",
+    "  border-radius: 8px;",
+    "  outline: 0;",
+    "  background: #101216;",
+    "  color: #fff;",
+    "  padding: 9px 10px;",
+    "  font: 500 13px/18px Arial, sans-serif;",
+    "}",
+    ".gr-direct-note-popover-text:focus {",
+    "  border-color: rgba(47, 212, 125, .58);",
+    "}",
+    ".gr-direct-note-popover-actions {",
+    "  display: grid;",
+    "  grid-template-columns: minmax(0, 1fr) auto auto;",
+    "  gap: 7px;",
+    "}",
+    ".gr-direct-note-popover-button {",
+    "  min-height: 32px;",
+    "  padding: 0 10px;",
+    "  border: 1px solid rgba(255, 255, 255, .22);",
+    "  border-radius: 999px;",
+    "  background: transparent;",
+    "  color: #dadbdf;",
+    "  font: 500 12px/16px Arial, sans-serif;",
+    "  cursor: pointer;",
+    "}",
+    ".gr-direct-note-popover-button.primary {",
+    "  background: #fff;",
+    "  color: #0a0a0a;",
+    "}",
+    ".gr-direct-note-popover-button.danger {",
+    "  border-color: rgba(255, 56, 72, .48);",
+    "  color: #ff7a86;",
+    "}",
+    ".gr-direct-note-popover-button:disabled {",
+    "  opacity: .42;",
+    "  cursor: default;",
+    "}",
+    ".gr-direct-note-notice {",
+    "  position: fixed;",
+    "  right: 18px;",
+    "  bottom: 18px;",
+    "  z-index: 2147483647;",
+    "  padding: 10px 13px;",
+    "  border-radius: 999px;",
+    "  background: #fff;",
+    "  color: #0a0a0a;",
+    "  font: 700 13px/18px Arial, sans-serif;",
+    "  box-shadow: 0 14px 34px rgba(0, 0, 0, .28);",
+    "}"
+  ].join("\n");
+  document.documentElement.append(style);
 }
 })();

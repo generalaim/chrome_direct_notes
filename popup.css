@@ -191,7 +191,7 @@ h2 {
 
 .mode-tabs {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
   padding: 4px;
   border: 1px solid var(--hairline);
@@ -471,6 +471,10 @@ textarea::placeholder {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
+}
+
+.card-actions.compact-actions {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .primary,

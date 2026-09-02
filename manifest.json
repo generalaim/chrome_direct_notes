@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GR | Direct Notes",
   "version": "0.1.0",
-  "description": "Chrome MV3 микровиджет для локальных заметок к кампаниям и группам объявлений Яндекс.Директа.",
+  "description": "Chrome MV3 микровиджет для локальных заметок к кампаниям, группам и объявлениям Яндекс.Директа.",
   "permissions": [
     "storage",
     "sidePanel",
