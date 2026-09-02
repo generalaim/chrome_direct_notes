@@ -63,6 +63,7 @@ let pageCounter = null;
 let fixedScanContext = null;
 let lastLocationHref = location.href;
 let enrichTimer = null;
+let pageIntegrationActive = false;
 
 init();
 
@@ -72,18 +73,16 @@ async function init() {
   }
 
   injectStyle();
-  createHoverButton();
-  createPageCounter();
   await loadSettings();
   bindEvents();
-  scheduleRefresh();
+  syncPageIntegration();
 }
 
 function bindEvents() {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message?.type === "DIRECT_NOTES_GET_CONTEXT") {
       resetFixedScanIfLocationChanged();
-      sendResponse({ ok: true, context: fixedScanContext || annotatePage() });
+      sendResponse({ ok: true, context: settings.enabled ? fixedScanContext || annotatePage() : emptyPageContext() });
       return true;
     }
 
@@ -95,7 +94,7 @@ function bindEvents() {
     if (message?.type === "DIRECT_NOTES_STATE_UPDATED") {
       loadSettings().then(() => {
         fixedScanContext = null;
-        scheduleRefresh();
+        syncPageIntegration();
         sendResponse({ ok: true });
       });
       return true;
@@ -108,8 +107,14 @@ function bindEvents() {
     }
 
     applySettings(changes[STORAGE_KEY].newValue || {});
-    scheduleRefresh();
+    syncPageIntegration();
   });
+}
+
+function enablePageIntegration() {
+  if (pageIntegrationActive || !isDirectPage()) {
+    return;
+  }
 
   document.addEventListener("click", handleOutsideClick, true);
   document.addEventListener("mousemove", handleMouseMove, true);
@@ -119,6 +124,38 @@ function bindEvents() {
   window.addEventListener("popstate", handleLocationChange);
   window.addEventListener("hashchange", handleLocationChange);
   observePage();
+  createHoverButton();
+  createPageCounter();
+  pageIntegrationActive = true;
+  scheduleRefresh();
+}
+
+function disablePageIntegration() {
+  document.removeEventListener("click", handleOutsideClick, true);
+  document.removeEventListener("mousemove", handleMouseMove, true);
+  document.removeEventListener("keydown", handleKeydown, true);
+  window.removeEventListener("scroll", scheduleRefresh, true);
+  window.removeEventListener("resize", scheduleRefresh);
+  window.removeEventListener("popstate", handleLocationChange);
+  window.removeEventListener("hashchange", handleLocationChange);
+
+  pageIntegrationActive = false;
+  mutationObserver?.disconnect();
+  mutationObserver = null;
+  fixedScanContext = null;
+  clearTimeout(refreshTimer);
+  clearTimeout(hoverHideTimer);
+  clearTimeout(enrichTimer);
+  clearPageArtifacts();
+}
+
+function syncPageIntegration() {
+  if (settings.enabled && isDirectPage()) {
+    enablePageIntegration();
+    return;
+  }
+
+  disablePageIntegration();
 }
 
 async function loadSettings() {
@@ -143,6 +180,11 @@ function observePage() {
 }
 
 function scheduleRefresh() {
+  if (!settings.enabled || !pageIntegrationActive || !isDirectPage()) {
+    disablePageIntegration();
+    return;
+  }
+
   resetFixedScanIfLocationChanged();
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(annotatePage, 160);
@@ -172,7 +214,7 @@ function annotatePage() {
     hidePopover();
     hideHoverButton();
     const context = emptyPageContext();
-    renderPageCounter(context);
+    clearPageArtifacts();
     return context;
   }
 
@@ -870,6 +912,21 @@ function clearGlobalHighlights() {
 
 function clearGlobalNoteButtons() {
   document.querySelectorAll(".gr-direct-note-id-button").forEach((button) => button.remove());
+}
+
+function clearPageArtifacts() {
+  hidePopover();
+  hideHoverButton();
+  clearGlobalHighlights();
+  clearGlobalNoteButtons();
+  document.querySelectorAll(".gr-direct-note-button").forEach((button) => button.remove());
+  document.querySelectorAll(".gr-direct-note-cell").forEach((cell) => cell.classList.remove("gr-direct-note-cell"));
+  hoverButton?.remove();
+  pageCounter?.remove();
+  hoverButton = null;
+  pageCounter = null;
+  hoverEntity = null;
+  activeEntity = null;
 }
 
 function entityMetaText(entity, note) {
