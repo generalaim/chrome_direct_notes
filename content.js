@@ -23,7 +23,8 @@ const TARGETS = [
       "[data-testid^='Grid.Cell-'][data-testid$='_Campaign_Campaign']",
       "[data-testid='Cell.Campaign_Campaign']",
       "[data-testid='CampaignNameCell.Id']"
-    ]
+    ],
+    nameFields: ["Campaign_CampName"]
   },
   {
     type: "adgroup",
@@ -31,7 +32,8 @@ const TARGETS = [
       "[data-testid^='Grid.Cell-'][data-testid$='_Adgroup_AdgroupId']",
       "[data-testid='Cell.Adgroup_AdgroupId']",
       "[data-testid='AdgroupNameCell.Id']"
-    ]
+    ],
+    nameFields: ["Adgroup_AdgroupName", "Adgroup_AdGroupName"]
   },
   {
     type: "ad",
@@ -39,7 +41,8 @@ const TARGETS = [
       "[data-testid^='Grid.Cell-'][data-testid$='_Banner_Banner']",
       "[data-testid='Cell.Banner_Banner']",
       "[data-testid='BannerNameCell.Id']"
-    ]
+    ],
+    nameFields: ["Banner_BannerTitle", "Banner_Title", "Ad_Title"]
   }
 ];
 
@@ -59,6 +62,7 @@ let hoverEntity = null;
 let pageCounter = null;
 let fixedScanContext = null;
 let lastLocationHref = location.href;
+let enrichTimer = null;
 
 init();
 
@@ -173,6 +177,7 @@ function annotatePage() {
   }
 
   const entities = pageEntities();
+  scheduleNotesEnrichment(entities);
   const notedEntities = entities.filter((entity) => noteForEntity(entity));
   notedEntities.forEach(addPersistentButtonForEntity);
   const globalMatches = refreshGlobalHighlights();
@@ -202,6 +207,7 @@ async function scanReportNotes() {
   }
 
   fixedScanContext = best?.context || pageNotesContext(visiblePageNotes());
+  await enrichNotesWithEntities(best?.entities || pageEntities());
   renderPageCounter(fixedScanContext);
   scheduleRefresh();
 
@@ -220,6 +226,7 @@ async function scanReportNotes() {
 async function scanNotesWithScroller(scroller) {
   const originalTop = scrollTopOf(scroller);
   const byKey = new Map();
+  const entitiesByKey = new Map();
   const seenRows = new Set();
   let steps = 0;
   let idleSteps = 0;
@@ -238,6 +245,7 @@ async function scanNotesWithScroller(scroller) {
     pageEntities().forEach((entity) => {
       if (entity?.key) {
         seenRows.add(entity.key);
+        entitiesByKey.set(entity.key, entity);
       }
     });
 
@@ -265,6 +273,7 @@ async function scanNotesWithScroller(scroller) {
 
   return {
     context: pageNotesContext([...byKey.values()]),
+    entities: [...entitiesByKey.values()],
     seenRows: seenRows.size,
     steps,
     reachedBottom
@@ -382,11 +391,13 @@ function entityFromCell(cell, type) {
     source ||
     link ||
     rootCell;
-  const name = cleanText(link?.textContent || textNode?.textContent || "");
+  const ownText = cleanText(link?.textContent || textNode?.textContent || "");
   const href = link?.href || "";
-  const entityId = cleanId(name) || cleanId(href);
+  const entityId = cleanId(ownText) || cleanId(href);
+  const relatedName = relatedEntityName(rootCell, type);
+  const name = relatedName || (ownText !== entityId ? ownText : "");
 
-  if (!entityId && !name) {
+  if (!entityId && !ownText && !name) {
     return null;
   }
 
@@ -971,6 +982,119 @@ function targetForCell(cell) {
   }
 
   return TARGETS.find((target) => target.selectors.some((selector) => cell.matches(selector)));
+}
+
+function targetForType(type) {
+  return TARGETS.find((target) => target.type === type) || null;
+}
+
+function relatedEntityName(rootCell, type) {
+  const target = targetForType(type);
+  const row = rootCell.closest("[data-testid^='Grid.Row-']");
+
+  if (!target?.nameFields?.length || !row) {
+    return "";
+  }
+
+  for (const field of target.nameFields) {
+    const nameCell = row.querySelector(`[data-testid$='_${cssAttributeEscape(field)}'], [data-testid='Cell.${cssAttributeEscape(field)}']`);
+
+    if (!nameCell || nameCell === rootCell || !isVisible(nameCell)) {
+      continue;
+    }
+
+    const name = cleanEntityName(nameCell);
+
+    if (name) {
+      return name;
+    }
+  }
+
+  return "";
+}
+
+function cleanEntityName(cell) {
+  const textElement =
+    cell.querySelector?.("a[href]") ||
+    cell.querySelector?.("[data-testid='Text.Content']") ||
+    cell.querySelector?.("[data-testid='Text']") ||
+    cell;
+  const text = cleanText(textElement?.textContent || "");
+
+  if (!text || /^\d+$/.test(text) || /^итого$/i.test(text)) {
+    return "";
+  }
+
+  return text;
+}
+
+function scheduleNotesEnrichment(entities) {
+  const candidates = entities.filter((entity) => entity?.key && entity.name && entity.name !== entity.entityId);
+
+  if (!candidates.length) {
+    return;
+  }
+
+  clearTimeout(enrichTimer);
+  enrichTimer = setTimeout(() => enrichNotesWithEntities(candidates), 400);
+}
+
+async function enrichNotesWithEntities(entities) {
+  const byKey = new Map();
+  entities.forEach((entity) => {
+    byKey.set(entity.key, entity);
+
+    if (entity.legacyKey) {
+      byKey.set(entity.legacyKey, entity);
+    }
+  });
+
+  if (!byKey.size) {
+    return;
+  }
+
+  const data = await chrome.storage.local.get(STORAGE_KEY);
+  const saved = data[STORAGE_KEY] || {};
+  const notes = Array.isArray(saved.notes) ? normalizeNotes(saved.notes) : [];
+  let changed = false;
+
+  const nextNotes = notes.map((note) => {
+    const entity = byKey.get(note.key) || byKey.get(note.legacyKey);
+
+    if (!entity || !entity.name || !shouldUpdateNoteName(note)) {
+      return note;
+    }
+
+    changed = true;
+    return {
+      ...note,
+      name: entity.name
+    };
+  });
+
+  if (!changed) {
+    return;
+  }
+
+  settings.notes = nextNotes;
+  await chrome.storage.local.set({
+    [STORAGE_KEY]: {
+      ...saved,
+      notes: nextNotes
+    }
+  });
+}
+
+function shouldUpdateNoteName(note) {
+  if (!note.name) {
+    return true;
+  }
+
+  if (note.entityId && note.name === note.entityId) {
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeNotes(notes) {
