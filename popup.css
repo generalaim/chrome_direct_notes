@@ -46,6 +46,7 @@ body {
 }
 
 button,
+select,
 textarea {
   font: inherit;
 }
@@ -71,8 +72,8 @@ p {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 56px;
   align-items: center;
-  gap: 16px;
-  min-height: 112px;
+  gap: 16px 18px;
+  min-height: 178px;
   padding: 22px;
   border: 1px solid var(--hairline);
   border-radius: 8px;
@@ -102,6 +103,90 @@ h1 {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.scope-tabs {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 2px;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--card-soft);
+}
+
+.scope-tab {
+  min-height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.scope-tab:hover {
+  border-color: var(--hairline-strong);
+  background: var(--card-mid);
+  color: var(--ink-soft);
+}
+
+.scope-tab.is-active {
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--ink);
+  box-shadow: 0 0 0 1px rgba(94, 218, 255, 0.08);
+}
+
+.scope-tab:disabled {
+  opacity: 0.46;
+  cursor: default;
+}
+
+.login-select {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 34px;
+  margin-top: -8px;
+  padding: 0 36px 0 13px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  outline: 0;
+  background:
+    linear-gradient(45deg, transparent 50%, var(--muted) 50%) calc(100% - 19px) 14px / 6px 6px no-repeat,
+    linear-gradient(135deg, var(--muted) 50%, transparent 50%) calc(100% - 13px) 14px / 6px 6px no-repeat,
+    var(--card-soft);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  appearance: none;
+}
+
+.login-select:hover {
+  border-color: var(--hairline-strong);
+  background-color: var(--card-mid);
+}
+
+.login-select:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.login-select.is-active {
+  border-color: var(--accent-line);
+  background-color: var(--accent-soft);
+  color: var(--ink);
+}
+
+.login-select:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 h2 {
@@ -177,17 +262,15 @@ h2 {
 .current-panel .panel-head {
   grid-template-columns: minmax(0, 1fr);
   align-items: start;
-  gap: 10px;
+  gap: 12px;
 }
 
 .current-panel .title-row {
-  display: grid;
-  grid-template-columns: minmax(0, auto) auto;
-  justify-content: start;
-}
-
-.current-panel .title-row h2 {
-  max-width: 170px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
 }
 
 .current-panel .scan-actions {
@@ -412,6 +495,15 @@ h2 {
   font-size: 12px;
 }
 
+.current-panel .login-pill {
+  max-width: 100%;
+  border-color: var(--hairline);
+  background: var(--card-soft);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .note-form {
   display: grid;
   gap: 10px;
@@ -531,10 +623,9 @@ textarea::placeholder {
 }
 
 .note-head {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 8px;
+  position: relative;
+  display: block;
+  min-width: 0;
 }
 
 .note-title-wrap {
@@ -545,20 +636,46 @@ textarea::placeholder {
 
 .note-title {
   color: var(--ink);
-  font-size: 14px;
-  line-height: 19px;
+  font-family: var(--font-mono);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 22px;
+  padding-right: 138px;
   overflow-wrap: anywhere;
 }
 
 .note-meta {
+  display: grid;
+  gap: 3px;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 12px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.note-meta-row {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+}
+
+.note-meta-label {
+  color: var(--ink-soft);
+  opacity: 0.72;
+}
+
+.note-meta-value {
+  min-width: 0;
+  color: var(--muted);
   overflow-wrap: anywhere;
 }
 
 .note-type {
+  position: absolute;
+  top: 0;
+  right: 0;
   border-color: var(--accent-line);
   background: var(--accent-soft);
   color: var(--ink-soft);

@@ -321,6 +321,7 @@ function emptyPageContext() {
   return {
     keys: [],
     total: 0,
+    login: currentLogin(),
     byType: {
       campaign: 0,
       adgroup: 0,
@@ -394,6 +395,7 @@ function entityFromCell(cell, type) {
     entityId,
     name: name || entityId,
     url: href || location.href,
+    login: currentLogin(),
     cell: rootCell,
     textElement: isExplicitIdElement ? source : link || roleLink || textNode || rootCell
   });
@@ -684,7 +686,7 @@ async function saveNote(entity, rawText) {
   const saved = data[STORAGE_KEY] || {};
   const notes = Array.isArray(saved.notes) ? normalizeNotes(saved.notes) : [];
   const now = new Date().toISOString();
-  const existing = notes.find((note) => note.key === entity.key);
+  const existing = noteForEntityFromNotes(entity, notes);
   const nextNote = normalizeNote({
     id: existing?.id || crypto.randomUUID(),
     type: entity.type,
@@ -692,11 +694,12 @@ async function saveNote(entity, rawText) {
     entityId: entity.entityId,
     name: entity.name,
     url: entity.url,
+    login: entity.login || currentLogin(),
     text,
     createdAt: existing?.createdAt || now,
     updatedAt: now
   });
-  const nextNotes = [nextNote, ...notes.filter((note) => note.key !== entity.key)];
+  const nextNotes = [nextNote, ...notes.filter((note) => note.key !== entity.key && note.id !== existing?.id)];
 
   await chrome.storage.local.set({
     [STORAGE_KEY]: {
@@ -717,7 +720,8 @@ async function removeNote(entity) {
   const data = await chrome.storage.local.get(STORAGE_KEY);
   const saved = data[STORAGE_KEY] || {};
   const notes = Array.isArray(saved.notes) ? normalizeNotes(saved.notes) : [];
-  const nextNotes = notes.filter((note) => note.key !== entity.key);
+  const existing = noteForEntityFromNotes(entity, notes);
+  const nextNotes = notes.filter((note) => note.key !== entity.key && note.id !== existing?.id);
 
   await chrome.storage.local.set({
     [STORAGE_KEY]: {
@@ -734,7 +738,13 @@ async function removeNote(entity) {
 }
 
 function noteForEntity(entity) {
-  return settings.notes.find((note) => note.key === entity.key) || null;
+  return noteForEntityFromNotes(entity, settings.notes);
+}
+
+function noteForEntityFromNotes(entity, notes) {
+  return notes.find((note) => note.key === entity.key)
+    || notes.find((note) => !note.login && note.legacyKey === entity.legacyKey)
+    || null;
 }
 
 function refreshGlobalHighlights() {
@@ -854,6 +864,8 @@ function clearGlobalNoteButtons() {
 function entityMetaText(entity, note) {
   const parts = [];
   const name = cleanText(entity.name);
+
+  parts.push(`Логин ${entity.login || note?.login || "без логина"}`);
 
   if (entity.entityId) {
     parts.push(`ID ${entity.entityId}`);
@@ -980,12 +992,16 @@ function normalizeNote(note) {
   const entityId = cleanId(note?.entityId);
   const name = cleanText(note?.name);
   const fallback = cleanText(note?.url);
+  const login = cleanLogin(note?.login);
   const keySource = entityId || normalizeName(name) || normalizeName(fallback);
+  const legacyKey = keySource ? `${type}:${keySource}` : "";
 
   return {
     id: note?.id || crypto.randomUUID(),
     type,
-    key: keySource ? `${type}:${keySource}` : "",
+    key: login && legacyKey ? `${login}|${legacyKey}` : legacyKey,
+    legacyKey,
+    login,
     entityId,
     name,
     url: String(note?.url || ""),
@@ -1000,11 +1016,15 @@ function normalizeEntity(entity) {
   const entityId = cleanId(entity?.entityId);
   const name = cleanText(entity?.name);
   const url = String(entity?.url || location.href);
+  const login = cleanLogin(entity?.login || currentLogin());
   const keySource = entityId || normalizeName(name) || normalizeName(url);
+  const legacyKey = keySource ? `${type}:${keySource}` : "";
 
   return {
     type,
-    key: keySource ? `${type}:${keySource}` : "",
+    key: login && legacyKey ? `${login}|${legacyKey}` : legacyKey,
+    legacyKey,
+    login,
     entityId,
     name,
     url,
@@ -1019,6 +1039,7 @@ function entityFromNote(note) {
     entityId: note.entityId,
     name: note.name || note.entityId,
     url: note.url || location.href,
+    login: note.login || currentLogin(),
     cell: null
   });
 }
@@ -1033,6 +1054,18 @@ function cleanId(value) {
 
 function cleanText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function currentLogin() {
+  try {
+    return cleanLogin(new URL(location.href).searchParams.get("ulogin"));
+  } catch (error) {
+    return "";
+  }
+}
+
+function cleanLogin(value) {
+  return cleanText(value).toLowerCase();
 }
 
 function normalizeName(value) {

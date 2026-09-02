@@ -8,9 +8,12 @@ const NOTE_TYPES = {
 const state = {
   enabled: true,
   activeType: "campaign",
+  loginScope: "current",
+  selectedLogin: "",
   showPageCounter: true,
   notes: [],
   pageContext: emptyPageContext(),
+  isDirectPage: false,
   scanRunning: false,
   scanMessage: "Скан отчета еще не запускался."
 };
@@ -21,6 +24,10 @@ let pageStatusTimer = null;
 
 const els = {
   notesCount: document.getElementById("notesCount"),
+  currentLoginScopeButton: document.getElementById("currentLoginScopeButton"),
+  allLoginScopeButton: document.getElementById("allLoginScopeButton"),
+  selectedLoginScopeButton: document.getElementById("selectedLoginScopeButton"),
+  loginSelect: document.getElementById("loginSelect"),
   campaignModeButton: document.getElementById("campaignModeButton"),
   adgroupModeButton: document.getElementById("adgroupModeButton"),
   adModeButton: document.getElementById("adModeButton"),
@@ -29,6 +36,7 @@ const els = {
   pageStatus: document.getElementById("pageStatus"),
   currentBadge: document.getElementById("currentBadge"),
   currentSubtitle: document.getElementById("currentSubtitle"),
+  loginStatus: document.getElementById("loginStatus"),
   scanPageButton: document.getElementById("scanPageButton"),
   scanStatus: document.getElementById("scanStatus"),
   refreshButton: document.getElementById("refreshButton"),
@@ -63,6 +71,26 @@ function bindEvents() {
     showToast(state.showPageCounter ? "Сводка на странице включена" : "Сводка на странице скрыта");
   });
 
+  [els.currentLoginScopeButton, els.allLoginScopeButton, els.selectedLoginScopeButton].forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.loginScope = normalizeLoginScope(button.dataset.loginScope);
+      ensureSelectedLogin();
+      await saveState();
+      render();
+    });
+  });
+
+  els.loginSelect.addEventListener("change", async () => {
+    state.selectedLogin = cleanLogin(els.loginSelect.value);
+
+    if (state.selectedLogin) {
+      state.loginScope = "selected";
+    }
+
+    await saveState();
+    render();
+  });
+
   [els.campaignModeButton, els.adgroupModeButton, els.adModeButton].forEach((button) => {
     button.addEventListener("click", async () => {
       state.activeType = normalizeType(button.dataset.noteType);
@@ -87,7 +115,10 @@ function bindEvents() {
       return;
     }
 
-    state.notes = state.notes.filter((note) => normalizeNote(note).type !== state.activeType);
+    state.notes = state.notes.filter((note) => {
+      const normalized = normalizeNote(note);
+      return normalized.type !== state.activeType || !noteMatchesCurrentLogin(normalized);
+    });
     await saveState();
     await notifyActiveTab();
     render();
@@ -132,6 +163,8 @@ async function loadState() {
 function applySavedState(saved) {
   state.enabled = saved.enabled !== false;
   state.activeType = normalizeType(saved.activeType);
+  state.loginScope = normalizeLoginScope(saved.loginScope);
+  state.selectedLogin = cleanLogin(saved.selectedLogin);
   state.showPageCounter = saved.showPageCounter !== false;
   state.notes = Array.isArray(saved.notes) ? normalizeNotes(saved.notes) : [];
 }
@@ -141,6 +174,8 @@ async function saveState() {
     [STORAGE_KEY]: {
       enabled: state.enabled,
       activeType: state.activeType,
+      loginScope: state.loginScope,
+      selectedLogin: state.selectedLogin,
       showPageCounter: state.showPageCounter,
       notes: normalizeNotes(state.notes)
     }
@@ -150,18 +185,27 @@ async function saveState() {
 async function updatePageStatus() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const isDirect = isDirectUrl(tab?.url || "");
+  state.isDirectPage = isDirect;
   state.pageContext = isDirect && tab?.id
     ? await getPageContext(tab.id)
     : emptyPageContext();
+  renderPageStatus();
+}
 
-  els.pageStatus.textContent = isDirect
+function renderPageStatus() {
+  const pageTotal = pageKeySet().size;
+
+  els.pageStatus.textContent = state.isDirectPage
     ? "Страница Директа найдена. Плашка появляется при наведении."
     : "Открой страницу Яндекс.Директа.";
-  els.currentBadge.textContent = isDirect ? `${state.pageContext.total} на стр.` : "нет";
-  els.currentBadge.classList.toggle("is-found", isDirect);
-  els.currentSubtitle.textContent = isDirect
+  els.currentBadge.textContent = state.isDirectPage ? `${pageTotal} на стр.` : "нет";
+  els.currentBadge.classList.toggle("is-found", state.isDirectPage);
+  els.currentSubtitle.textContent = state.isDirectPage
     ? pageContextText()
     : "Виджет не добавляет элементы и не слушает клики вне direct.yandex.ru.";
+  els.loginStatus.textContent = state.isDirectPage
+    ? state.pageContext.login || "логин ?"
+    : "логин ?";
 }
 
 async function getPageContext(tabId) {
@@ -175,13 +219,15 @@ async function getPageContext(tabId) {
 
 function render() {
   renderHeader();
+  renderPageStatus();
   renderTabs();
   renderScanState();
   renderList();
 }
 
 function renderHeader() {
-  const count = state.notes.length;
+  renderLoginControls();
+  const count = scopedNotes().length;
   els.enabledToggle.checked = state.enabled;
   els.pageCounterToggle.checked = state.showPageCounter;
   els.notesCount.textContent = String(count);
@@ -191,6 +237,31 @@ function renderHeader() {
   }
 
   lastCount = count;
+}
+
+function renderLoginControls() {
+  const logins = knownLogins();
+  ensureSelectedLogin(logins);
+
+  els.currentLoginScopeButton.classList.toggle("is-active", state.loginScope === "current");
+  els.allLoginScopeButton.classList.toggle("is-active", state.loginScope === "all");
+  els.selectedLoginScopeButton.classList.toggle("is-active", state.loginScope === "selected");
+  els.currentLoginScopeButton.disabled = !state.pageContext.login;
+  els.selectedLoginScopeButton.disabled = !logins.length;
+  els.loginSelect.disabled = !logins.length;
+  els.loginSelect.classList.toggle("is-active", state.loginScope === "selected");
+  els.loginSelect.textContent = "";
+
+  if (!logins.length) {
+    els.loginSelect.append(selectOption("", "Логинов пока нет"));
+    return;
+  }
+
+  logins.forEach((login) => {
+    els.loginSelect.append(selectOption(login, login));
+  });
+
+  els.loginSelect.value = logins.includes(state.selectedLogin) ? state.selectedLogin : logins[0];
 }
 
 function renderScanState() {
@@ -233,11 +304,25 @@ function renderList() {
 
     const title = document.createElement("div");
     title.className = "note-title";
-    title.textContent = note.name || `${NOTE_TYPES[note.type].one} без названия`;
+    title.textContent = noteTitleText(note);
 
     const meta = document.createElement("div");
     meta.className = "note-meta";
-    meta.textContent = noteMetaText(note);
+    noteMetaRows(note).forEach((row) => {
+      const metaRow = document.createElement("div");
+      metaRow.className = "note-meta-row";
+
+      const label = document.createElement("span");
+      label.className = "note-meta-label";
+      label.textContent = row.label;
+
+      const value = document.createElement("span");
+      value.className = "note-meta-value";
+      value.textContent = row.value;
+
+      metaRow.append(label, value);
+      meta.append(metaRow);
+    });
 
     titleWrap.append(title, meta);
 
@@ -316,6 +401,7 @@ async function scanCurrentReport() {
       return;
     }
 
+    state.isDirectPage = true;
     state.pageContext = normalizePageContext(response?.context);
     state.scanMessage = scanResultText(response || {});
     showToast("Скан завершен");
@@ -350,7 +436,25 @@ function scanResultText(response) {
 }
 
 function activeNotes() {
-  return state.notes.filter((note) => note.type === state.activeType);
+  return scopedNotes().filter((note) => note.type === state.activeType);
+}
+
+function scopedNotes() {
+  return state.notes.filter(noteMatchesCurrentLogin);
+}
+
+function noteMatchesCurrentLogin(note) {
+  if (state.loginScope === "all") {
+    return true;
+  }
+
+  const login = activeLoginFilter();
+
+  if (!login) {
+    return true;
+  }
+
+  return note.login === login;
 }
 
 function sortedActiveNotes() {
@@ -367,26 +471,88 @@ function sortedActiveNotes() {
 }
 
 function isNoteOnPage(note) {
-  return pageKeySet().has(note.key);
+  const keys = pageKeySet();
+  return keys.has(note.key) || Boolean(note.legacyKey && keys.has(note.legacyKey));
 }
 
 function pageKeySet() {
-  return new Set(state.pageContext.keys);
+  if (!pageContextMatchesScope()) {
+    return new Set();
+  }
+
+  const login = activeLoginFilter();
+  const keys = !login
+    ? state.pageContext.keys
+    : state.pageContext.keys.filter((key) => key.startsWith(`${login}|`) || !key.includes("|"));
+
+  return new Set(keys);
 }
 
 function pageKeysForType(type) {
-  return new Set(state.pageContext.keys.filter((key) => key.startsWith(`${type}:`)));
+  return new Set([...pageKeySet()].filter((key) => key.startsWith(`${type}:`) || key.includes(`|${type}:`)));
+}
+
+function pageContextMatchesScope() {
+  if (state.loginScope === "all") {
+    return true;
+  }
+
+  const login = activeLoginFilter();
+
+  if (!login || !state.pageContext.login) {
+    return true;
+  }
+
+  return login === state.pageContext.login;
+}
+
+function activeLoginFilter() {
+  if (state.loginScope === "selected") {
+    return state.selectedLogin;
+  }
+
+  if (state.loginScope === "current") {
+    return state.pageContext.login;
+  }
+
+  return "";
+}
+
+function knownLogins() {
+  return [...new Set(state.notes.map((note) => cleanLogin(note.login)).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, "ru"));
+}
+
+function ensureSelectedLogin(logins = knownLogins()) {
+  if (logins.includes(state.selectedLogin)) {
+    return;
+  }
+
+  if (state.pageContext.login && logins.includes(state.pageContext.login)) {
+    state.selectedLogin = state.pageContext.login;
+    return;
+  }
+
+  state.selectedLogin = logins[0] || "";
+}
+
+function selectOption(value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
 }
 
 function pageContextText() {
-  const total = state.pageContext.total;
+  const keys = pageKeySet();
+  const total = keys.size;
 
   if (!total) {
     return "На этой странице сохраненных заметок пока не найдено.";
   }
 
   const parts = [];
-  const byType = state.pageContext.byType;
+  const byType = pageTypeCounts(keys);
 
   if (byType.campaign) {
     parts.push(`кампаний: ${byType.campaign}`);
@@ -403,10 +569,26 @@ function pageContextText() {
   return `На странице: ${total} уник. (${parts.join(", ")})`;
 }
 
+function pageTypeCounts(keys = pageKeySet()) {
+  const byType = {
+    campaign: 0,
+    adgroup: 0,
+    ad: 0
+  };
+
+  keys.forEach((key) => {
+    const type = normalizeType(String(key).split("|").pop().split(":")[0]);
+    byType[type] += 1;
+  });
+
+  return byType;
+}
+
 function emptyPageContext() {
   return {
     keys: [],
     total: 0,
+    login: "",
     byType: {
       campaign: 0,
       adgroup: 0,
@@ -421,6 +603,7 @@ function normalizePageContext(context) {
 
   normalized.keys = [...new Set(keys)];
   normalized.total = normalized.keys.length;
+  normalized.login = cleanLogin(context?.login);
   normalized.byType = {
     campaign: Number(context?.byType?.campaign || 0),
     adgroup: Number(context?.byType?.adgroup || 0),
@@ -429,7 +612,7 @@ function normalizePageContext(context) {
 
   if (!normalized.byType.campaign && !normalized.byType.adgroup && !normalized.byType.ad) {
     normalized.keys.forEach((key) => {
-      const type = normalizeType(String(key).split(":")[0]);
+      const type = normalizeType(String(key).split("|").pop().split(":")[0]);
       normalized.byType[type] += 1;
     });
   }
@@ -458,12 +641,16 @@ function normalizeNote(note) {
   const entityId = cleanId(note?.entityId);
   const name = cleanText(note?.name);
   const fallback = cleanText(note?.url);
+  const login = cleanLogin(note?.login);
   const keySource = entityId || normalizeName(name) || normalizeName(fallback);
+  const legacyKey = keySource ? `${type}:${keySource}` : "";
 
   return {
     id: note?.id || crypto.randomUUID(),
     type,
-    key: keySource ? `${type}:${keySource}` : "",
+    key: login && legacyKey ? `${login}|${legacyKey}` : legacyKey,
+    legacyKey,
+    login,
     entityId,
     name,
     url: String(note?.url || ""),
@@ -473,25 +660,47 @@ function normalizeNote(note) {
   };
 }
 
-function noteMetaText(note) {
-  const parts = [];
-
-  if (note.entityId) {
-    parts.push(`ID ${note.entityId}`);
-  } else {
-    parts.push("без ID");
-  }
+function noteMetaRows(note) {
+  const rows = [
+    {
+      label: "Логин:",
+      value: note.login || "без логина"
+    }
+  ];
 
   if (note.name && note.name !== note.entityId) {
-    parts.push(note.name);
+    rows.push({
+      label: "Название:",
+      value: note.name
+    });
   }
 
-  parts.push(`Редактирование: ${formatDate(note.updatedAt || note.createdAt)}`);
-  return parts.join(" · ");
+  rows.push({
+    label: "Редактирование:",
+    value: formatDate(note.updatedAt || note.createdAt)
+  });
+
+  return rows;
+}
+
+function noteTitleText(note) {
+  if (note.entityId) {
+    return note.entityId;
+  }
+
+  if (note.name) {
+    return note.name;
+  }
+
+  return `${NOTE_TYPES[note.type].one} без номера`;
 }
 
 function normalizeType(value) {
   return ["campaign", "adgroup", "ad"].includes(value) ? value : "campaign";
+}
+
+function normalizeLoginScope(value) {
+  return ["all", "selected"].includes(value) ? value : "current";
 }
 
 function isDirectUrl(url) {
@@ -504,6 +713,10 @@ function cleanId(value) {
 
 function cleanText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function cleanLogin(value) {
+  return cleanText(value).toLowerCase();
 }
 
 function normalizeName(value) {

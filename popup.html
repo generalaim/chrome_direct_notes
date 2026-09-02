@@ -14,6 +14,12 @@
           <h1>Notes</h1>
         </div>
         <div class="score" id="notesCount" title="Всего заметок">0</div>
+        <div class="scope-tabs" aria-label="Фильтр логина">
+          <button class="scope-tab" id="currentLoginScopeButton" type="button" data-login-scope="current">Текущий</button>
+          <button class="scope-tab" id="allLoginScopeButton" type="button" data-login-scope="all">Все логины</button>
+          <button class="scope-tab" id="selectedLoginScopeButton" type="button" data-login-scope="selected">Выбранный</button>
+        </div>
+        <select class="login-select" id="loginSelect" aria-label="Выбрать логин"></select>
       </header>
 
       <section class="panel">
@@ -53,6 +59,7 @@
             <div class="title-row">
               <h2>Работа на странице</h2>
               <span class="count-pill" id="currentBadge">inline</span>
+              <span class="count-pill login-pill" id="loginStatus">login</span>
             </div>
             <p class="status-line" id="currentSubtitle">Наведи на кампанию, группу или объявление: появится плашка для добавления или редактирования заметки.</p>
           </div>
