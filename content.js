@@ -19,6 +19,10 @@ let mutationObserver = null;
 init();
 
 async function init() {
+  if (!isDirectPage()) {
+    return;
+  }
+
   injectStyle();
   await loadSettings();
   bindEvents();
