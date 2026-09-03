@@ -694,9 +694,19 @@ function showEditor(entity, anchor) {
   popover.className = "gr-direct-note-popover";
   popover.addEventListener("click", (event) => event.stopPropagation());
 
+  const head = document.createElement("div");
+  head.className = "gr-direct-note-popover-head";
+
   const title = document.createElement("div");
   title.className = "gr-direct-note-popover-title";
   title.textContent = NOTE_TYPES[entity.type];
+
+  const age = document.createElement("span");
+  age.className = `gr-direct-note-popover-age ${noteAgeClass(note)}`;
+  age.title = note ? `Создана: ${formatDate(note.createdAt || note.updatedAt)}` : "Новая заметка";
+  age.textContent = note ? noteAgeText(note) : "0 дней";
+
+  head.append(title, age);
 
   const meta = document.createElement("div");
   meta.className = "gr-direct-note-popover-meta";
@@ -721,7 +731,7 @@ function showEditor(entity, anchor) {
 
   remove.disabled = !note;
   actions.append(save, remove, close);
-  popover.append(title, meta, textarea, actions);
+  popover.append(head, meta, textarea, actions);
   document.documentElement.append(popover);
   placePopover(anchor);
   textarea.focus();
@@ -1312,6 +1322,52 @@ function formatDate(value) {
   });
 }
 
+function noteAgeText(note) {
+  const days = noteAgeDays(note);
+  return `${days} ${dayWord(days)}`;
+}
+
+function noteAgeClass(note) {
+  const days = noteAgeDays(note);
+
+  if (days >= 15) {
+    return "is-old";
+  }
+
+  if (days >= 8) {
+    return "is-watch";
+  }
+
+  return "is-fresh";
+}
+
+function noteAgeDays(note) {
+  const created = new Date(note?.createdAt || note?.updatedAt || Date.now());
+
+  if (Number.isNaN(created.getTime())) {
+    return 0;
+  }
+
+  const diff = Date.now() - created.getTime();
+  return Math.max(0, Math.floor(diff / 86400000));
+}
+
+function dayWord(days) {
+  const abs = Math.abs(days);
+  const last = abs % 10;
+  const lastTwo = abs % 100;
+
+  if (last === 1 && lastTwo !== 11) {
+    return "день";
+  }
+
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) {
+    return "дня";
+  }
+
+  return "дней";
+}
+
 function isTotalCell(cell) {
   return /итого|всего/i.test(cleanText(cell.textContent));
 }
@@ -1578,8 +1634,38 @@ function injectStyle() {
     "  overflow: auto !important;",
     "  transform: translate(-50%, -50%) !important;",
     "}",
+    ".gr-direct-note-popover-head {",
+    "  display: flex !important;",
+    "  align-items: center !important;",
+    "  justify-content: space-between !important;",
+    "  gap: 10px !important;",
+    "  min-width: 0 !important;",
+    "}",
     ".gr-direct-note-popover-title {",
     "  font: 700 14px/18px Arial, sans-serif !important;",
+    "}",
+    ".gr-direct-note-popover-age {",
+    "  display: inline-grid !important;",
+    "  flex: 0 0 auto !important;",
+    "  min-height: 24px !important;",
+    "  place-items: center !important;",
+    "  padding: 0 9px !important;",
+    "  border: 1px solid rgba(255, 255, 255, .18) !important;",
+    "  border-radius: 999px !important;",
+    "  background: rgba(255, 255, 255, .06) !important;",
+    "  color: #c8ccd4 !important;",
+    "  font: 700 11px/1 Consolas, monospace !important;",
+    "  white-space: nowrap !important;",
+    "}",
+    ".gr-direct-note-popover-age.is-watch {",
+    "  border-color: rgba(255, 164, 74, .72) !important;",
+    "  background: rgba(255, 164, 74, .16) !important;",
+    "  color: #ffd3a3 !important;",
+    "}",
+    ".gr-direct-note-popover-age.is-old {",
+    "  border-color: rgba(255, 56, 72, .64) !important;",
+    "  background: rgba(255, 56, 72, .16) !important;",
+    "  color: #ffb0b8 !important;",
     "}",
     ".gr-direct-note-popover-meta {",
     "  max-width: 100% !important;",
