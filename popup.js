@@ -28,6 +28,7 @@ const els = {
   allLoginScopeButton: document.getElementById("allLoginScopeButton"),
   selectedLoginScopeButton: document.getElementById("selectedLoginScopeButton"),
   loginSelect: document.getElementById("loginSelect"),
+  deleteProjectButton: document.getElementById("deleteProjectButton"),
   campaignModeButton: document.getElementById("campaignModeButton"),
   adgroupModeButton: document.getElementById("adgroupModeButton"),
   adModeButton: document.getElementById("adModeButton"),
@@ -90,6 +91,8 @@ function bindEvents() {
     await saveState();
     render();
   });
+
+  els.deleteProjectButton.addEventListener("click", deleteActiveProject);
 
   [els.campaignModeButton, els.adgroupModeButton, els.adModeButton].forEach((button) => {
     button.addEventListener("click", async () => {
@@ -250,6 +253,7 @@ function renderLoginControls() {
   els.selectedLoginScopeButton.disabled = !logins.length;
   els.loginSelect.disabled = !logins.length;
   els.loginSelect.classList.toggle("is-active", state.loginScope === "selected");
+  renderDeleteProjectButton();
   els.loginSelect.textContent = "";
 
   if (!logins.length) {
@@ -361,6 +365,16 @@ function renderList() {
     card.append(head, text, actions);
     els.notesList.append(card);
   });
+}
+
+function renderDeleteProjectButton() {
+  const login = deletableProjectLogin();
+  const count = login ? notesForLogin(login).length : 0;
+
+  els.deleteProjectButton.disabled = !login || !count;
+  els.deleteProjectButton.title = login && count
+    ? `Удалить проект ${login} и все заметки: ${count}`
+    : "Нет выбранного проекта для удаления";
 }
 
 function actionButton(label, className, handler) {
@@ -563,6 +577,23 @@ function knownLogins() {
     .sort((a, b) => a.localeCompare(b, "ru"));
 }
 
+function deletableProjectLogin() {
+  if (state.loginScope === "selected") {
+    return state.selectedLogin;
+  }
+
+  if (state.loginScope === "current") {
+    return state.pageContext.login;
+  }
+
+  return "";
+}
+
+function notesForLogin(login) {
+  const normalizedLogin = cleanLogin(login);
+  return state.notes.filter((note) => cleanLogin(note.login) === normalizedLogin);
+}
+
 function ensureSelectedLogin(logins = knownLogins()) {
   if (logins.includes(state.selectedLogin)) {
     return;
@@ -574,6 +605,29 @@ function ensureSelectedLogin(logins = knownLogins()) {
   }
 
   state.selectedLogin = logins[0] || "";
+}
+
+async function deleteActiveProject() {
+  const login = deletableProjectLogin();
+  const projectNotes = notesForLogin(login);
+
+  if (!login || !projectNotes.length) {
+    return;
+  }
+
+  const confirmed = confirm(`Удалить проект "${login}" и все его заметки: ${projectNotes.length}?`);
+
+  if (!confirmed) {
+    return;
+  }
+
+  state.notes = state.notes.filter((note) => cleanLogin(note.login) !== login);
+  ensureSelectedLogin();
+  await saveState();
+  await notifyActiveTab();
+  await updatePageStatus();
+  render();
+  showToast(`Проект удален: ${login}`);
 }
 
 function selectOption(value, label) {
