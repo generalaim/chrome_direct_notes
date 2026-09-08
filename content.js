@@ -11,6 +11,12 @@ const NOTE_TYPES = {
   adgroup: "Группа",
   ad: "Объявление"
 };
+const STATUS_EMOJIS = [
+  "🧐", "😍", "😎", "🤩", "🤔", "🤥", "🤮", "🤧", "🤒", "🤕", "🤑", "🤠", "😈", "💩", "👽", "🤖",
+  "👍", "👎", "🤞", "👈", "👌", "👋", "✍️", "👁", "🧠", "💪", "👑", "🎓", "💼", "🦉", "🐶", "🐱",
+  "🐵", "🐣", "🐥", "🦅", "🐡", "🔥", "⭐️", "⚡️", "🎯", "🚧", "🚀", "🛸", "📟", "☎️", "💎", "💰",
+  "💸", "🛎", "🔑", "🛠", "⛏", "✏️", "📌", "📈", "📉", "⏸", "♻️"
+];
 const GLOBAL_SCAN_LIMIT = 2600;
 const HOVER_HIDE_DELAY = 560;
 const SCROLL_SETTLE_DELAY = 240;
@@ -500,9 +506,9 @@ function addPersistentButtonForEntity(entity) {
     showEditor(entity, button);
   }, true);
 
-  updateButtonState(button, entity);
   entity.cell.classList.add("gr-direct-note-cell");
   insertButtonAfterAnchor(inlineAnchorForEntity(entity), button);
+  updateButtonState(button, entity);
 }
 
 function updateButtonState(button, entity) {
@@ -512,6 +518,49 @@ function updateButtonState(button, entity) {
   button.title = note
     ? `${NOTE_TYPES[entity.type]}: заметка есть. Редактирование: ${formatDate(note.updatedAt || note.createdAt)}`
     : `${NOTE_TYPES[entity.type]}: добавить заметку`;
+  syncStatusMarker(button, entity, note);
+}
+
+function syncStatusMarker(button, entity, note = noteForEntity(entity)) {
+  const wrap = button.parentElement?.classList.contains("gr-direct-note-inline-wrap")
+    ? button.parentElement
+    : null;
+
+  if (!wrap) {
+    return;
+  }
+
+  let marker = wrap.querySelector(`.gr-direct-note-status-marker[data-note-key="${cssAttributeEscape(entity.key)}"]`);
+  const emoji = normalizeStatusEmoji(note?.statusEmoji);
+
+  if (!emoji) {
+    marker?.remove();
+    return;
+  }
+
+  if (!marker) {
+    marker = document.createElement("button");
+    marker.className = "gr-direct-note-status-marker";
+    marker.type = "button";
+    marker.dataset.noteKey = entity.key;
+    marker.directNotesEntity = entity;
+    ["pointerdown", "mousedown", "mouseup", "dblclick"].forEach((eventName) => {
+      marker.addEventListener(eventName, stopDirectEvent, true);
+    });
+    marker.addEventListener("mouseenter", () => showHoverButton(marker.directNotesEntity));
+    marker.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      showEditor(marker.directNotesEntity, marker);
+    }, true);
+    button.insertAdjacentElement("afterend", marker);
+  }
+
+  marker.textContent = emoji;
+  marker.title = `${NOTE_TYPES[entity.type]}: статус ${emoji}`;
+  marker.setAttribute("aria-label", `Статус заметки: ${emoji}`);
+  marker.directNotesEntity = entity;
 }
 
 function handleMouseMove(event) {
@@ -690,8 +739,10 @@ function showEditor(entity, anchor) {
   hidePopover();
 
   const note = noteForEntity(entity);
+  let selectedStatusEmoji = normalizeStatusEmoji(note?.statusEmoji);
   popover = document.createElement("section");
   popover.className = "gr-direct-note-popover";
+  popover.dataset.statusEmoji = selectedStatusEmoji;
   popover.addEventListener("click", (event) => event.stopPropagation());
 
   const head = document.createElement("div");
@@ -718,11 +769,93 @@ function showEditor(entity, anchor) {
   textarea.placeholder = "Комментарий по работе, проверке, гипотезе или изменению";
   textarea.value = note?.text || "";
 
+  const emojiCopyBox = document.createElement("div");
+  emojiCopyBox.className = "gr-direct-note-emoji-copy";
+
+  const emojiCopyToggle = popoverButton("Эмоджи", "ghost emoji", () => {
+    emojiCopyPalette.hidden = !emojiCopyPalette.hidden;
+  });
+  emojiCopyToggle.title = "Открыть список эмоджи для копирования";
+
+  const emojiCopyHint = document.createElement("span");
+  emojiCopyHint.className = "gr-direct-note-emoji-copy-hint";
+  emojiCopyHint.textContent = "клик копирует";
+
+  const emojiCopyPalette = document.createElement("div");
+  emojiCopyPalette.className = "gr-direct-note-emoji-copy-palette";
+  emojiCopyPalette.hidden = true;
+
+  STATUS_EMOJIS.forEach((emoji) => {
+    const emojiButton = document.createElement("button");
+    emojiButton.className = "gr-direct-note-emoji-copy-option";
+    emojiButton.type = "button";
+    emojiButton.textContent = emoji;
+    emojiButton.title = `Скопировать ${emoji}`;
+    emojiButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await copyText(emoji);
+      showInlineNotice(`Скопировано: ${emoji}`);
+    });
+    emojiCopyPalette.append(emojiButton);
+  });
+
+  emojiCopyBox.append(emojiCopyToggle, emojiCopyHint, emojiCopyPalette);
+
+  const statusBox = document.createElement("div");
+  statusBox.className = "gr-direct-note-status-box";
+
+  const statusCurrent = document.createElement("span");
+  statusCurrent.className = "gr-direct-note-status-current";
+
+  const statusToggle = popoverButton(note?.statusEmoji ? "Заменить статус" : "Выбрать статус", "ghost status", () => {
+    statusPalette.hidden = !statusPalette.hidden;
+  });
+
+  const statusRemove = popoverButton("Убрать", "ghost status-remove", () => {
+    selectedStatusEmoji = "";
+    updateStatusUi();
+  });
+
+  const statusPalette = document.createElement("div");
+  statusPalette.className = "gr-direct-note-status-palette";
+  statusPalette.hidden = true;
+
+  STATUS_EMOJIS.forEach((emoji) => {
+    const emojiButton = document.createElement("button");
+    emojiButton.className = "gr-direct-note-status-option";
+    emojiButton.type = "button";
+    emojiButton.textContent = emoji;
+    emojiButton.title = `Поставить статус ${emoji}`;
+    emojiButton.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      selectedStatusEmoji = emoji;
+      statusPalette.hidden = true;
+      updateStatusUi();
+    });
+    statusPalette.append(emojiButton);
+  });
+
+  function updateStatusUi() {
+    popover.dataset.statusEmoji = selectedStatusEmoji;
+    statusCurrent.textContent = selectedStatusEmoji || "Статус не выбран";
+    statusCurrent.classList.toggle("has-status", Boolean(selectedStatusEmoji));
+    statusToggle.textContent = selectedStatusEmoji ? "Заменить статус" : "Выбрать статус";
+    statusRemove.hidden = !selectedStatusEmoji;
+    statusPalette.querySelectorAll(".gr-direct-note-status-option").forEach((button) => {
+      button.classList.toggle("is-selected", button.textContent === selectedStatusEmoji);
+    });
+  }
+
+  updateStatusUi();
+  statusBox.append(statusCurrent, statusToggle, statusRemove, statusPalette);
+
   const actions = document.createElement("div");
   actions.className = "gr-direct-note-popover-actions";
 
   const save = popoverButton(note ? "Сохранить" : "Добавить", "primary", async () => {
-    await saveNote(entity, textarea.value);
+    await saveNote(entity, textarea.value, selectedStatusEmoji);
   });
   const remove = popoverButton("Удалить", "danger", async () => {
     await removeNote(entity);
@@ -731,7 +864,7 @@ function showEditor(entity, anchor) {
 
   remove.disabled = !note;
   actions.append(save, remove, close);
-  popover.append(head, meta, textarea, actions);
+  popover.append(head, meta, statusBox, textarea, emojiCopyBox, actions);
   document.documentElement.append(popover);
   placePopover(anchor);
   textarea.focus();
@@ -757,7 +890,7 @@ function stopDirectEvent(event) {
   event.stopImmediatePropagation();
 }
 
-async function saveNote(entity, rawText) {
+async function saveNote(entity, rawText, statusEmoji = "") {
   const text = cleanNoteText(rawText);
 
   if (!text) {
@@ -779,6 +912,7 @@ async function saveNote(entity, rawText) {
     url: entity.url,
     login: entity.login || currentLogin(),
     text,
+    statusEmoji: normalizeStatusEmoji(statusEmoji),
     createdAt: existing?.createdAt || now,
     updatedAt: now
   });
@@ -944,6 +1078,7 @@ function clearPageArtifacts() {
   clearGlobalHighlights();
   clearGlobalNoteButtons();
   document.querySelectorAll(".gr-direct-note-button").forEach((button) => button.remove());
+  document.querySelectorAll(".gr-direct-note-status-marker").forEach((marker) => marker.remove());
   document.querySelectorAll(".gr-direct-note-cell").forEach((cell) => cell.classList.remove("gr-direct-note-cell"));
   hoverButton?.remove();
   pageCounter?.remove();
@@ -993,7 +1128,7 @@ function placePopover(anchor) {
 }
 
 function handleOutsideClick(event) {
-  if (!popover || popover.contains(event.target) || event.target.closest?.(".gr-direct-note-button, .gr-direct-note-hover")) {
+  if (!popover || popover.contains(event.target) || event.target.closest?.(".gr-direct-note-button, .gr-direct-note-status-marker, .gr-direct-note-hover")) {
     return;
   }
 
@@ -1008,7 +1143,7 @@ function handleKeydown(event) {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter" && popover && activeEntity) {
     event.preventDefault();
     const textarea = popover.querySelector("textarea");
-    saveNote(activeEntity, textarea?.value || "");
+    saveNote(activeEntity, textarea?.value || "", popover.dataset.statusEmoji || "");
   }
 }
 
@@ -1020,13 +1155,39 @@ function showInlineNotice(message) {
   setTimeout(() => notice.remove(), 1400);
 }
 
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.documentElement.append(input);
+  input.select();
+  document.execCommand("copy");
+  input.remove();
+}
+
 function clearStaleButtons() {
   document.querySelectorAll(".gr-direct-note-button").forEach((button) => {
     const cell = button.closest("[data-testid^='Grid.Cell-'], [data-testid^='Cell.']");
     const hasStoredNote = settings.notes.some((note) => note.key === button.dataset.noteKey);
 
     if (!cell || !isVisible(cell) || !settings.enabled || !hasStoredNote) {
+      button.parentElement?.querySelector(`.gr-direct-note-status-marker[data-note-key="${cssAttributeEscape(button.dataset.noteKey)}"]`)?.remove();
       button.remove();
+    }
+  });
+
+  document.querySelectorAll(".gr-direct-note-status-marker").forEach((marker) => {
+    const hasButton = marker.parentElement?.querySelector(`.gr-direct-note-button[data-note-key="${cssAttributeEscape(marker.dataset.noteKey)}"]`);
+
+    if (!hasButton) {
+      marker.remove();
     }
   });
 }
@@ -1229,6 +1390,7 @@ function normalizeNote(note) {
     name,
     url: String(note?.url || ""),
     text: cleanNoteText(note?.text),
+    statusEmoji: normalizeStatusEmoji(note?.statusEmoji),
     createdAt: note?.createdAt || note?.updatedAt || new Date().toISOString(),
     updatedAt: note?.updatedAt || note?.createdAt || new Date().toISOString()
   };
@@ -1277,6 +1439,11 @@ function cleanId(value) {
 
 function cleanText(value) {
   return String(value || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeStatusEmoji(value) {
+  const emoji = String(value || "").trim();
+  return STATUS_EMOJIS.includes(emoji) ? emoji : "";
 }
 
 function cleanNoteText(value) {
@@ -1508,6 +1675,26 @@ function injectStyle() {
     "  background: rgba(72, 208, 255, .16) !important;",
     "  color: #e8fbff !important;",
     "}",
+    ".gr-direct-note-status-marker {",
+    "  position: relative !important;",
+    "  z-index: 50 !important;",
+    "  display: inline-grid !important;",
+    "  width: 18px !important;",
+    "  height: 18px !important;",
+    "  min-width: 18px !important;",
+    "  min-height: 18px !important;",
+    "  margin-left: 0 !important;",
+    "  padding: 0 !important;",
+    "  place-items: center !important;",
+    "  border: 1px solid rgba(94, 218, 255, .48) !important;",
+    "  border-radius: 999px !important;",
+    "  background: rgba(8, 10, 14, .72) !important;",
+    "  color: #ffffff !important;",
+    "  font: 700 13px/1 Arial, sans-serif !important;",
+    "  vertical-align: middle !important;",
+    "  box-shadow: 0 5px 12px rgba(0, 0, 0, .18) !important;",
+    "  cursor: pointer !important;",
+    "}",
     ".gr-direct-note-id-button {",
     "  position: fixed !important;",
     "  z-index: 2147483646 !important;",
@@ -1672,6 +1859,62 @@ function injectStyle() {
     "  overflow-wrap: anywhere !important;",
     "  color: #8c9199 !important;",
     "  font: 500 13px/18px Consolas, monospace !important;",
+    "}",
+    ".gr-direct-note-status-box, .gr-direct-note-emoji-copy {",
+    "  display: grid !important;",
+    "  grid-template-columns: minmax(0, 1fr) auto auto !important;",
+    "  align-items: center !important;",
+    "  gap: 7px !important;",
+    "}",
+    ".gr-direct-note-status-current {",
+    "  min-width: 0 !important;",
+    "  color: #8c9199 !important;",
+    "  font: 600 12px/18px Arial, sans-serif !important;",
+    "  overflow: hidden !important;",
+    "  text-overflow: ellipsis !important;",
+    "  white-space: nowrap !important;",
+    "}",
+    ".gr-direct-note-status-current.has-status {",
+    "  color: #ffffff !important;",
+    "  font-size: 18px !important;",
+    "  line-height: 22px !important;",
+    "}",
+    ".gr-direct-note-status-palette, .gr-direct-note-emoji-copy-palette {",
+    "  grid-column: 1 / -1 !important;",
+    "  display: grid !important;",
+    "  grid-template-columns: repeat(8, minmax(0, 1fr)) !important;",
+    "  gap: 5px !important;",
+    "  max-height: 132px !important;",
+    "  overflow: auto !important;",
+    "  padding: 7px !important;",
+    "  border: 1px solid rgba(94, 218, 255, .18) !important;",
+    "  border-radius: 8px !important;",
+    "  background: #101216 !important;",
+    "}",
+    ".gr-direct-note-status-palette[hidden], .gr-direct-note-emoji-copy-palette[hidden], .gr-direct-note-popover-button[hidden] {",
+    "  display: none !important;",
+    "}",
+    ".gr-direct-note-status-option, .gr-direct-note-emoji-copy-option {",
+    "  display: grid !important;",
+    "  width: 100% !important;",
+    "  min-height: 28px !important;",
+    "  place-items: center !important;",
+    "  padding: 0 !important;",
+    "  border: 1px solid transparent !important;",
+    "  border-radius: 7px !important;",
+    "  background: transparent !important;",
+    "  color: #ffffff !important;",
+    "  font: 700 17px/1 Arial, sans-serif !important;",
+    "  cursor: pointer !important;",
+    "}",
+    ".gr-direct-note-status-option:hover, .gr-direct-note-emoji-copy-option:hover, .gr-direct-note-status-option.is-selected {",
+    "  border-color: rgba(94, 218, 255, .58) !important;",
+    "  background: rgba(72, 208, 255, .16) !important;",
+    "}",
+    ".gr-direct-note-emoji-copy-hint {",
+    "  color: #8c9199 !important;",
+    "  font: 500 11px/16px Arial, sans-serif !important;",
+    "  white-space: nowrap !important;",
     "}",
     ".gr-direct-note-popover-text {",
     "  box-sizing: border-box !important;",

@@ -749,6 +749,7 @@ function normalizeNote(note) {
     name,
     url: String(note?.url || ""),
     text: cleanNoteText(note?.text),
+    statusEmoji: cleanText(note?.statusEmoji),
     createdAt: note?.createdAt || note?.updatedAt || new Date().toISOString(),
     updatedAt: note?.updatedAt || note?.createdAt || new Date().toISOString()
   };
