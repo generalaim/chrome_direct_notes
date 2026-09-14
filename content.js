@@ -493,7 +493,6 @@ function addPersistentButtonForEntity(entity) {
   button.type = "button";
   button.textContent = "З";
   button.title = "Заметка GR";
-  button.directNotesEntity = entity;
   button.setAttribute("aria-label", `Заметка: ${NOTE_TYPES[entity.type]}`);
   ["pointerdown", "mousedown", "mouseup", "dblclick"].forEach((eventName) => {
     button.addEventListener(eventName, stopDirectEvent, true);
