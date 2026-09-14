@@ -1193,13 +1193,25 @@ function clearStaleButtons() {
 }
 
 function inlineAnchorForEntity(entity) {
-  return entity.textElement && document.documentElement.contains(entity.textElement)
+  return entity.textElement && document.documentElement.contains(entity.textElement) && !isGridCellElement(entity.textElement)
     ? entity.textElement
     : entity.cell;
 }
 
 function insertButtonAfterAnchor(anchor, button) {
   if (!anchor) {
+    return;
+  }
+
+  if (isGridCellElement(anchor)) {
+    const textTarget = inlineTextTarget(anchor);
+
+    if (textTarget && textTarget !== anchor) {
+      insertButtonAfterAnchor(textTarget, button);
+      return;
+    }
+
+    anchor.append(button);
     return;
   }
 
@@ -1212,6 +1224,24 @@ function insertButtonAfterAnchor(anchor, button) {
   wrap.className = "gr-direct-note-inline-wrap";
   anchor.insertAdjacentElement("beforebegin", wrap);
   wrap.append(anchor, button);
+}
+
+function isGridCellElement(element) {
+  const testId = element?.getAttribute?.("data-testid") || "";
+  return /^Grid\.Cell-/.test(testId) || element?.matches?.("[data-testid^='Grid.Cell-']");
+}
+
+function inlineTextTarget(root) {
+  return [...root.querySelectorAll("a[href], [role='link'], [data-testid='Text.Content'], [data-testid='Text'], span")]
+    .find((node) => {
+      if (!node || node === root || node.querySelector?.(".gr-direct-note-button")) {
+        return false;
+      }
+
+      const text = cleanText(node.textContent || "");
+      const rect = node.getBoundingClientRect();
+      return text && rect.width > 8 && rect.height > 8 && isVisible(node);
+    }) || null;
 }
 
 function targetCellSelector() {
