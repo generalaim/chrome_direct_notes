@@ -784,6 +784,12 @@ function showEditor(entity, anchor) {
   emojiCopyPalette.className = "gr-direct-note-emoji-copy-palette";
   emojiCopyPalette.hidden = true;
 
+  const popularCopyRow = emojiPalettePopularRow(async (emoji) => {
+    await copyText(emoji);
+    showInlineNotice(`Скопировано: ${emoji}`);
+  });
+  emojiCopyPalette.append(popularCopyRow);
+
   STATUS_EMOJIS.forEach((emoji) => {
     const emojiButton = document.createElement("button");
     emojiButton.className = "gr-direct-note-emoji-copy-option";
@@ -820,6 +826,13 @@ function showEditor(entity, anchor) {
   statusPalette.className = "gr-direct-note-status-palette";
   statusPalette.hidden = true;
 
+  const popularStatusRow = emojiPalettePopularRow((emoji) => {
+    selectedStatusEmoji = emoji;
+    statusPalette.hidden = true;
+    updateStatusUi();
+  });
+  statusPalette.append(popularStatusRow);
+
   STATUS_EMOJIS.forEach((emoji) => {
     const emojiButton = document.createElement("button");
     emojiButton.className = "gr-direct-note-status-option";
@@ -844,6 +857,9 @@ function showEditor(entity, anchor) {
     statusRemove.hidden = !selectedStatusEmoji;
     statusPalette.querySelectorAll(".gr-direct-note-status-option").forEach((button) => {
       button.classList.toggle("is-selected", button.textContent === selectedStatusEmoji);
+    });
+    statusPalette.querySelectorAll(".gr-direct-note-emoji-popular-option").forEach((button) => {
+      button.classList.toggle("is-selected", button.dataset.statusEmoji === selectedStatusEmoji);
     });
   }
 
@@ -881,6 +897,59 @@ function popoverButton(label, kind, handler) {
     handler();
   });
   return button;
+}
+
+function emojiPalettePopularRow(onSelect) {
+  const row = document.createElement("div");
+  row.className = "gr-direct-note-emoji-popular-row";
+
+  const popular = popularStatusEmojis(7);
+
+  if (!popular.length) {
+    row.hidden = true;
+    return row;
+  }
+
+  const label = document.createElement("span");
+  label.className = "gr-direct-note-emoji-popular-label";
+  label.textContent = "частые";
+  row.append(label);
+
+  popular.forEach((emoji) => {
+    const button = document.createElement("button");
+    button.className = "gr-direct-note-emoji-popular-option";
+    button.type = "button";
+    button.textContent = emoji;
+    button.dataset.statusEmoji = emoji;
+    button.title = `Частый эмоджи ${emoji}`;
+    button.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      await onSelect(emoji);
+    });
+    row.append(button);
+  });
+
+  return row;
+}
+
+function popularStatusEmojis(limit = 7) {
+  const counts = new Map();
+
+  settings.notes.forEach((note) => {
+    const emoji = normalizeStatusEmoji(note.statusEmoji);
+
+    if (!emoji) {
+      return;
+    }
+
+    counts.set(emoji, (counts.get(emoji) || 0) + 1);
+  });
+
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || STATUS_EMOJIS.indexOf(a[0]) - STATUS_EMOJIS.indexOf(b[0]))
+    .slice(0, limit)
+    .map(([emoji]) => emoji);
 }
 
 function stopDirectEvent(event) {
@@ -1930,6 +1999,39 @@ function injectStyle() {
     ".gr-direct-note-status-palette[hidden], .gr-direct-note-emoji-copy-palette[hidden], .gr-direct-note-popover-button[hidden] {",
     "  display: none !important;",
     "}",
+    ".gr-direct-note-emoji-popular-row {",
+    "  grid-column: 1 / -1 !important;",
+    "  display: flex !important;",
+    "  align-items: center !important;",
+    "  gap: 5px !important;",
+    "  min-width: 0 !important;",
+    "  padding: 0 0 6px !important;",
+    "  border-bottom: 1px solid rgba(94, 218, 255, .12) !important;",
+    "  overflow: hidden !important;",
+    "}",
+    ".gr-direct-note-emoji-popular-row[hidden] {",
+    "  display: none !important;",
+    "}",
+    ".gr-direct-note-emoji-popular-label {",
+    "  flex: 0 0 auto !important;",
+    "  color: #8c9199 !important;",
+    "  font: 600 10px/14px Arial, sans-serif !important;",
+    "  text-transform: uppercase !important;",
+    "}",
+    ".gr-direct-note-emoji-popular-option {",
+    "  display: grid !important;",
+    "  flex: 0 0 28px !important;",
+    "  width: 28px !important;",
+    "  min-height: 28px !important;",
+    "  place-items: center !important;",
+    "  padding: 0 !important;",
+    "  border: 1px solid rgba(94, 218, 255, .18) !important;",
+    "  border-radius: 7px !important;",
+    "  background: rgba(72, 208, 255, .08) !important;",
+    "  color: #ffffff !important;",
+    "  font: 700 17px/1 \"Segoe UI Emoji\", \"Apple Color Emoji\", \"Noto Color Emoji\", Arial, sans-serif !important;",
+    "  cursor: pointer !important;",
+    "}",
     ".gr-direct-note-status-option, .gr-direct-note-emoji-copy-option {",
     "  display: grid !important;",
     "  width: 100% !important;",
@@ -1943,7 +2045,7 @@ function injectStyle() {
     "  font: 700 17px/1 Arial, sans-serif !important;",
     "  cursor: pointer !important;",
     "}",
-    ".gr-direct-note-status-option:hover, .gr-direct-note-emoji-copy-option:hover, .gr-direct-note-status-option.is-selected {",
+    ".gr-direct-note-status-option:hover, .gr-direct-note-emoji-copy-option:hover, .gr-direct-note-status-option.is-selected, .gr-direct-note-emoji-popular-option:hover, .gr-direct-note-emoji-popular-option.is-selected {",
     "  border-color: rgba(94, 218, 255, .58) !important;",
     "  background: rgba(72, 208, 255, .16) !important;",
     "}",
